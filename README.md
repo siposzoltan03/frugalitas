@@ -58,14 +58,22 @@ Spend the coins in Old Penny's shop:
 
 Coins are kept per machine, in the plugin's local store.
 
-## Install (local)
+## Install
+
+```
+/plugin install penny-pincher --marketplace siposzoltan03/penny-pincher
+```
+
+Answer `y` to add the marketplace, then pick a scope. Updates: `/plugin update penny-pincher`, then `/reload-plugins`.
+
+For local development from a clone:
 
 ```
 /plugin marketplace add ~/projects/penny-pincher
 /plugin install penny-pincher@penny-pincher
 ```
 
-Because the marketplace is a local folder, `/reload-plugins` picks up edits.
+With a local folder as the marketplace, `/reload-plugins` picks up edits.
 
 ## Settings
 
