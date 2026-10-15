@@ -20,6 +20,21 @@ spend bookkeeping. It is active only in sessions that run through LiteLLM (`ANTH
 
 All days are UTC days, as LiteLLM counts them.
 
+## Prompt-cache countdown
+
+The prompt cache stays warm for 5 minutes after the last turn (an hour with `promptCacheTtl: "1h"` or
+`CLAUDE_CODE_PROMPT_CACHE_TTL=1h`). After that, the next turn rewrites the whole context at cache-write price.
+
+- **Status line:** `… · ⏳ cache 3:42`, in the last minute `⌛ cache 0:42!`, then `❄️ cache expired`. It doesn't count while
+  a turn runs, since the cache is being refreshed then.
+- **Dashboard:** under the "Cache: X% hit" line, `⏳ Cache: 3:42 ▰▰▰▰▰▰▰▱▱▱`, red in the last minute.
+- **~30 s before expiry** (for contexts over 50k tokens): a toast with the price of the rewrite, and what a `/compact`
+  would cost right now while the cache is still warm. If the rewrite is $0.50 or more, a native notification too.
+- **At expiry:** the next 10 turns priced three ways (keep going, `/compact`, `/clear`) from the proxy's real prices, with
+  a recommendation: on the same task keep going or compact; for a new task, `/clear`. While the cache stays expired this
+  also shows on the dashboard and in `/penny tips`.
+- It keeps counting after `/reload-plugins`: the last turn's end is kept per session.
+
 ## Savings tips
 
 Tips arrive as toasts (ordinary ones at most every 30 minutes, urgent ones right away, each only once), in the
