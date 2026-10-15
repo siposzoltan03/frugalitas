@@ -8,6 +8,10 @@ spend bookkeeping. It is active only in sessions that run through LiteLLM (`ANTH
 
 ![Every skin in every mood](docs/sprites.png)
 
+> **See also: [FrugalBar](https://github.com/infinitaslearning/FrugalBar)**, a macOS menu-bar app from a colleague at
+> Infinitas Learning that shows your daily and weekly LiteLLM spend at a glance (internal to Infinitas Learning).
+> The two complement each other: FrugalBar for the overall picture, Frugalitas inside your Claude Code sessions.
+
 ## What it does
 
 - **Status line:** `🪙 🙂 session $1.20/$20.00 · today $22.81/$60.00 · month $585/$800`, refreshed after every turn and
