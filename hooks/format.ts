@@ -53,7 +53,7 @@ const part = (label: string, spent: number, budget: number) =>
 
 export function statusLine(spend: Spend, budgets: Budgets, fun: boolean, stale: boolean): string {
   const w = worst(spend, budgets)
-  const head = fun ? `🪙 ${w ? mood(w.ratio) : '😇'}` : 'penny'
+  const head = fun ? `🪙 ${w ? mood(w.ratio) : '😇'}` : 'frugal'
   const parts = [
     part('session', spend.session, budgets.session),
     part('today', spend.today, budgets.daily),

@@ -59,7 +59,7 @@ const POLL_MS = 5 * 60_000
 const MIN_REFRESH_MS = 10_000
 const TIP_EVERY_MS = 30 * 60_000
 const KEEP_MS = 40 * 86_400_000
-const PANE_ID = 'penny-dashboard'
+const PANE_ID = 'frugal-dashboard'
 const TURN_DISPLAY_MS = 8_000
 
 type Snapshot = { at: number; keySpend: number; today: Day | undefined; activity: Activity; date: string }
@@ -85,11 +85,11 @@ type Io = {
   redraw: () => void
 }
 
-const snapshotAtom = atom({ plugin: 'penny-pincher', key: 'snapshot' } as const, null as SnapshotState | null)
-const lastTurnAtom = atom({ plugin: 'penny-pincher', key: 'lastTurn' } as const, null as TurnCost | null)
-const bandHiddenAtom = atom({ plugin: 'penny-pincher', key: 'bandHidden' } as const, false)
-const xpAtom = atom({ plugin: 'penny-pincher', key: 'xp' } as const, null as XpView | null)
-const adviceAtom = atom({ plugin: 'penny-pincher', key: 'advice' } as const, null as AdviceView | null)
+const snapshotAtom = atom({ plugin: 'frugalitas', key: 'snapshot' } as const, null as SnapshotState | null)
+const lastTurnAtom = atom({ plugin: 'frugalitas', key: 'lastTurn' } as const, null as TurnCost | null)
+const bandHiddenAtom = atom({ plugin: 'frugalitas', key: 'bandHidden' } as const, false)
+const xpAtom = atom({ plugin: 'frugalitas', key: 'xp' } as const, null as XpView | null)
+const adviceAtom = atom({ plugin: 'frugalitas', key: 'advice' } as const, null as AdviceView | null)
 
 const XP_KEY = 'xp'
 
@@ -157,7 +157,7 @@ export const register: Register = (on, options) => {
   const background = (work: Promise<unknown>) =>
     void work.catch(err => {
       try {
-        io?.debug(`penny-pincher: ${err instanceof Error ? err.message : String(err)}`)
+        io?.debug(`frugalitas: ${err instanceof Error ? err.message : String(err)}`)
       } catch {}
     })
 
@@ -232,7 +232,7 @@ export const register: Register = (on, options) => {
         await checkBudgets($io, snap)
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err)
-        $io.debug(`penny-pincher: ${lastError}`)
+        $io.debug(`frugalitas: ${lastError}`)
       } finally {
         inflight = undefined
         showStatus($io)
@@ -260,7 +260,7 @@ export const register: Register = (on, options) => {
       await $io.set(key, { at: s.at, level })
       if (level === 1) {
         const vars = { scope: SCOPE_NAMES[scope], pct: Math.round(ratio * 100) }
-        $io.toast(isFun ? say(pack().warn, vars, s.at) : `penny: ${vars.scope} budget at ${vars.pct}%`, 8000)
+        $io.toast(isFun ? say(pack().warn, vars, s.at) : `frugal: ${vars.scope} budget at ${vars.pct}%`, 8000)
       } else {
         const text = isFun
           ? say(
@@ -273,10 +273,10 @@ export const register: Register = (on, options) => {
               },
               s.at,
             )
-          : `penny: ${SCOPE_NAMES[scope]} budget exceeded (${money(spentBy[scope])}/${money(budgets[scope])})`
+          : `frugal: ${SCOPE_NAMES[scope]} budget exceeded (${money(spentBy[scope])}/${money(budgets[scope])})`
         $io.toast(text, 12_000)
         $io.notify(text)
-        if (isBlocking) $io.toast('🔒 New prompts are blocked until /penny allow.', 12_000)
+        if (isBlocking) $io.toast('🔒 New prompts are blocked until /frugal allow.', 12_000)
       }
     }
   }
@@ -348,7 +348,7 @@ export const register: Register = (on, options) => {
       ...SHOP.filter(i => i.kind === 'pack').map(line),
       '',
       '👉 wearing · ✅ owned · 🔒 for sale',
-      'Buy: /penny buy <id> · change (free): /penny skin <id>, /penny pack <id>',
+      'Buy: /frugal buy <id> · change (free): /frugal skin <id>, /frugal pack <id>',
     ].join('\n')
   }
 
@@ -375,10 +375,10 @@ export const register: Register = (on, options) => {
         l = result.ledger
         if (result.gained > 0) {
           const quests = result.quests.length > 0 ? ` 🎯 (${result.quests.length} quest${result.quests.length > 1 ? 's' : ''})` : ''
-          $io.toast((isFun ? say(pack().xp, { xp: result.gained }, s.at) : `penny: +${result.gained} coins`) + quests, 10_000)
+          $io.toast((isFun ? say(pack().xp, { xp: result.gained }, s.at) : `frugal: +${result.gained} coins`) + quests, 10_000)
         }
       } catch (err) {
-        $io.debug(`penny-pincher xp: ${err instanceof Error ? err.message : String(err)}`)
+        $io.debug(`frugalitas xp: ${err instanceof Error ? err.message : String(err)}`)
         return xpView(l)
       }
     }
@@ -410,7 +410,7 @@ export const register: Register = (on, options) => {
         history = (await fetchActivity($io.fetch, conn!, addDays(s.date, -56), s.date)).days
         historyOn = s.date
       } catch (err) {
-        $io.debug(`penny-pincher history: ${err instanceof Error ? err.message : String(err)}`)
+        $io.debug(`frugalitas history: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
   }
@@ -501,7 +501,7 @@ export const register: Register = (on, options) => {
       keys: () => $.store.keys(),
       status: text => $.ui.status(text),
       toast: (text, timeoutMs) => $.ui.toast(text, { timeoutMs }),
-      notify: text => void $.ui.notify(text, { title: 'Penny Pincher' }).catch(() => {}),
+      notify: text => void $.ui.notify(text, { title: 'Frugalitas' }).catch(() => {}),
       debug: text => $.ui.log(text, { to: 'debug' }),
       every: (ms, fn) => void $.clock.every(ms, fn),
       after: (ms, fn) => void $.clock.after(ms, fn),
@@ -510,8 +510,8 @@ export const register: Register = (on, options) => {
       redraw: () => $.ui.invalidate('ui.render'),
     }
     await $.command.register({
-      name: 'penny',
-      description: 'LiteLLM cost report: /penny [<N> | refresh | allow | panel | tips | xp | shop | buy <id>]',
+      name: 'frugal',
+      description: 'LiteLLM cost report: /frugal [<N> | refresh | allow | panel | tips | xp | shop | buy <id>]',
     })
     conn = makeConn({
       baseUrl: await $.env.get('ANTHROPIC_BASE_URL'),
@@ -703,16 +703,16 @@ export const register: Register = (on, options) => {
     const over = overScopes()
     if (over.length === 0 || (await $.store.get(`unlock:${snap.date}`)) !== undefined) return next(e)
     const names = over.map(s => SCOPE_NAMES[s]).join(', ')
-    return { drop: `🔒 Penny Pincher: the ${names} budget is used up. If you really need to: /penny allow (lifts it until midnight UTC).` }
+    return { drop: `🔒 Frugalitas: the ${names} budget is used up. If you really need to: /frugal allow (lifts it until midnight UTC).` }
   }).catch(($, e, next) => next(e))
 
-  // --- /penny command -------------------------------------------------------
+  // --- /frugal command -------------------------------------------------------
 
-  on('command.run', { command: 'penny' }, async ($, e) => {
+  on('command.run', { command: 'frugal' }, async ($, e) => {
     const $io = io
     if (!conn || !$io) {
       return {
-        text: 'Penny Pincher: this session is not running through a LiteLLM proxy (no ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), so there is nothing to watch.',
+        text: 'Frugalitas: this session is not running through a LiteLLM proxy (no ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), so there is nothing to watch.',
       }
     }
     const arg = e.args.trim().toLowerCase()
@@ -720,24 +720,24 @@ export const register: Register = (on, options) => {
     if (arg === 'help' || arg === '?') {
       return {
         text: [
-          "/penny            – this month's report",
-          '/penny <N>        – the last N days',
-          '/penny refresh    – reload the numbers',
-          '/penny allow      – lift the over-budget block for today',
-          '/penny panel      – open the cost dashboard',
-          "/penny tips       – every current savings tip and today's quest",
-          '/penny xp         – your rank and coins',
-          '/penny shop       – skins and message packs',
-          '/penny buy <id>   – buy with coins (and wear it)',
-          '/penny skin <id>  – wear an owned skin · /penny pack <id> – use an owned pack (never buys)',
+          "/frugal            – this month's report",
+          '/frugal <N>        – the last N days',
+          '/frugal refresh    – reload the numbers',
+          '/frugal allow      – lift the over-budget block for today',
+          '/frugal panel      – open the cost dashboard',
+          "/frugal tips       – every current savings tip and today's quest",
+          '/frugal xp         – your rank and coins',
+          '/frugal shop       – skins and message packs',
+          '/frugal buy <id>   – buy with coins (and wear it)',
+          '/frugal skin <id>  – wear an owned skin · /frugal pack <id> – use an owned pack (never buys)',
           '',
-          `Budgets: session ${money(budgets.session)}, daily ${money(budgets.daily)}, monthly ${money(budgets.monthly)} · mode: ${isBlocking ? 'block' : 'warn'} (/config → penny-pincher)`,
+          `Budgets: session ${money(budgets.session)}, daily ${money(budgets.daily)}, monthly ${money(budgets.monthly)} · mode: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`,
         ].join('\n'),
       }
     }
 
     if (arg === 'panel' || arg === 'pane' || arg === 'dashboard') {
-      await $.ui.open({ id: PANE_ID, title: '🪙 Penny Pincher' })
+      await $.ui.open({ id: PANE_ID, title: '🪙 Frugalitas' })
       return { text: 'Dashboard opened.' }
     }
 
@@ -748,7 +748,7 @@ export const register: Register = (on, options) => {
     }
 
     const s = await refresh($io, true)
-    if (!s) return { text: `Penny Pincher: LiteLLM is not answering (${lastError ?? 'unknown error'}).` }
+    if (!s) return { text: `Frugalitas: LiteLLM is not answering (${lastError ?? 'unknown error'}).` }
 
     const [verb = '', ...rest] = arg.split(/\s+/)
     if (verb === 'tips' || verb === 'tip') {
@@ -767,18 +767,18 @@ export const register: Register = (on, options) => {
       const view = await creditXp($io, s)
       await update($, xpAtom, () => view)
       const l = ledger!
-      if (budgets.daily <= 0) return { text: 'Penny Pincher: coins need a daily budget (/config → penny-pincher → Daily budget).' }
+      if (budgets.daily <= 0) return { text: 'Frugalitas: coins need a daily budget (/config → frugalitas → Daily budget).' }
 
       if (verb === 'xp') return { text: xpText(l) }
       if (verb === 'shop') return { text: shopText(l) }
 
       const id = rest.join(' ')
       const matches = SHOP.filter(i => i.id === id && (verb === 'buy' || i.kind === verb))
-      if (matches.length === 0) return { text: `No such item: "${id}". See /penny shop` }
+      if (matches.length === 0) return { text: `No such item: "${id}". See /frugal shop` }
       if (matches.length > 1) {
         const ownsAll = matches.every(i => owns(l, i))
         return {
-          text: `"${id}" is both a skin and a pack${ownsAll ? ', both free and already yours' : ''}. To wear: /penny skin ${id} or /penny pack ${id}`,
+          text: `"${id}" is both a skin and a pack${ownsAll ? ', both free and already yours' : ''}. To wear: /frugal skin ${id} or /frugal pack ${id}`,
         }
       }
       const item = matches[0]!
@@ -814,7 +814,7 @@ export const register: Register = (on, options) => {
     const parallel = parallelUseTip(sessionCost, keyDelta(s))
     return {
       text: report({
-        title: days > 0 ? `🪙 Penny Pincher – last ${days} days (${start} → ${s.date}, UTC)` : `🪙 Penny Pincher – ${s.date.slice(0, 7)}`,
+        title: days > 0 ? `🪙 Frugalitas – last ${days} days (${start} → ${s.date}, UTC)` : `🪙 Frugalitas – ${s.date.slice(0, 7)}`,
         activity,
         spend: spendOf(s),
         budgets,
@@ -895,7 +895,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
-        <Text bold>🪙 Penny Pincher {moodEmoji} {date}</Text>
+        <Text bold>🪙 Frugalitas {moodEmoji} {date}</Text>
         <Text> </Text>
 
 

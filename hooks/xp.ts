@@ -144,7 +144,7 @@ export function owns(ledger: Ledger, item: ShopItem): boolean {
   return item.price === 0 || ledger.owned.includes(`${item.kind}:${item.id}`)
 }
 
-const wearCommand = (item: ShopItem) => `/penny ${item.kind} ${item.id}`
+const wearCommand = (item: ShopItem) => `/frugal ${item.kind} ${item.id}`
 
 /** Spends coins on `item` and puts it on; never charges for what you already own. */
 export function buy(ledger: Ledger, item: ShopItem): { ledger: Ledger } | { error: string } {
@@ -157,7 +157,7 @@ export function buy(ledger: Ledger, item: ShopItem): { ledger: Ledger } | { erro
 
 /** Puts on an owned `item`; spends nothing. */
 export function wear(ledger: Ledger, item: ShopItem): { ledger: Ledger } | { error: string } {
-  if (!owns(ledger, item)) return { error: `You don't own ${item.name} yet, it's ${item.price} coins: /penny buy ${item.id}` }
+  if (!owns(ledger, item)) return { error: `You don't own ${item.name} yet, it's ${item.price} coins: /frugal buy ${item.id}` }
   return { ledger: item.kind === 'skin' ? { ...ledger, skin: item.id } : { ...ledger, pack: item.id } }
 }
 

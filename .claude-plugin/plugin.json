@@ -1,7 +1,7 @@
 {
-  "name": "penny-pincher",
+  "name": "frugalitas",
   "version": "0.1.0",
-  "description": "Penny Pincher: LiteLLM pay-as-you-go cost monitor — status line, budget guard, /penny report, savings tips, coins and a shop.",
+  "description": "Frugalitas: LiteLLM pay-as-you-go cost monitor — status line, budget guard, /frugal report, savings tips, coins and a shop.",
   "author": { "name": "Zoltán Sipos" },
   "types": "./types/index.d.ts",
   "userConfig": {
@@ -26,7 +26,7 @@
     "overBudget": {
       "type": "string",
       "title": "Over budget",
-      "description": "warn: just say so; block: refuse new prompts until /penny allow.",
+      "description": "warn: just say so; block: refuse new prompts until /frugal allow.",
       "options": ["warn", "block"],
       "default": "warn"
     },

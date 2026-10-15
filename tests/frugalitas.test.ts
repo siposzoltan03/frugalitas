@@ -113,7 +113,7 @@ function world(on: On) {
 }
 
 const COMMAND = (args: string) =>
-  ({ command: 'penny', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as const
+  ({ command: 'frugal', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as const
 
 describe('pure parts', () => {
   test('custom headers and the connection', async () => {
@@ -170,7 +170,7 @@ describe('in a session', () => {
 
     expect(seen[0]).toContain('https://litellm.example.com/')
     expect(statuses.at(-1)).toBe('🪙 😇 session $0.00/$20.00 · today $12.00/$60.00 · month $42.00/$800') // no turn yet
-    expect(text).toContain('🪙 Penny Pincher – 2026-10')
+    expect(text).toContain('🪙 Frugalitas – 2026-10')
     expect(text).toContain('claude-opus-5-5')
     expect(text).toContain('Total: $42.00')
   })
@@ -201,7 +201,7 @@ describe('in a session', () => {
     expect(statuses.at(-1)).toContain('session $0.09/$20.00') // the session's own spend did not move
   })
 
-  test('block mode drops prompts over budget until /penny allow', { options: { overBudget: 'block', dailyBudget: 10 } }, async ($, on) => {
+  test('block mode drops prompts over budget until /frugal allow', { options: { overBudget: 'block', dailyBudget: 10 } }, async ($, on) => {
     const { toasts } = world(on)
     proxy(on, () => 5, [{ date: '2026-10-13', spend: 12 }])
     await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
@@ -304,7 +304,7 @@ describe('XP', () => {
     expect('error' in again && again.error).toContain('already own') // no second charge
 
     const unowned = wear(bought.ledger, dragon)
-    expect('error' in unowned && unowned.error).toContain('/penny buy dragon') // wearing never buys
+    expect('error' in unowned && unowned.error).toContain('/frugal buy dragon') // wearing never buys
 
     const miser: ShopItem = { kind: 'skin', id: 'miser', name: 'Old Penny', description: '', price: 0 }
     const back = wear(bought.ledger, miser)

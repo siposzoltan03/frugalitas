@@ -29,7 +29,7 @@ export type AdviceView = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'penny-pincher': {
+    'frugalitas': {
       snapshot: SnapshotState | null
       lastTurn: TurnCost | null
       bandHidden: boolean

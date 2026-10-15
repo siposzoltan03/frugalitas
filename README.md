@@ -1,4 +1,6 @@
-# 🪙 Penny Pincher
+# 🪙 Frugalitas
+
+*Frugalitas* is Latin for thrift: tokens are not infinite.
 
 A Claude Code plugin that watches what you spend through a LiteLLM proxy (pay-as-you-go), using the proxy's own
 spend bookkeeping. It is active only in sessions that run through LiteLLM (`ANTHROPIC_BASE_URL` +
@@ -11,12 +13,12 @@ spend bookkeeping. It is active only in sessions that run through LiteLLM (`ANTH
 - **Status line:** `🪙 🙂 session $1.20/$20.00 · today $22.81/$60.00 · month $585/$800`, refreshed after every turn and
   every 5 minutes. Session spend is the session's own turns (subagents included) priced token by token at the proxy's
   `/model/info` prices, so other sessions or tools on the same key don't leak into it. Today and month are LiteLLM's
-  billed numbers. If the key spends clearly more than the session during it, the report and `/penny tips` say the key is
+  billed numbers. If the key spends clearly more than the session during it, the report and `/frugal tips` say the key is
   probably shared.
 - **Budget guard:** a toast at 80% and 100% of each budget (plus a native notification at 100%). In `block` mode, new
-  prompts are refused over budget until `/penny allow` lifts it for the day.
-- **`/penny`:** monthly report with daily bars, per-model breakdown ($/MTok), cache hit rate and savings.
-  `/penny 7` for the last 7 days · `/penny refresh` · `/penny panel` for the dashboard · `/penny help`.
+  prompts are refused over budget until `/frugal allow` lifts it for the day.
+- **`/frugal`:** monthly report with daily bars, per-model breakdown ($/MTok), cache hit rate and savings.
+  `/frugal 7` for the last 7 days · `/frugal refresh` · `/frugal panel` for the dashboard · `/frugal help`.
 - **Fun mode:** a mood emoji (😇 → 🙂 → 😬 → 🥵 → 🔥 → 💀), a pixel-art mascot on the dashboard whose mood follows your
   budget, quips, and what your spend would have bought (coffees, pizzas, concert tickets…).
 
@@ -34,7 +36,7 @@ The prompt cache stays warm for 5 minutes after the last turn (an hour with `pro
   would cost right now while the cache is still warm. If the rewrite is $0.50 or more, a native notification too.
 - **At expiry:** the next 10 turns priced three ways (keep going, `/compact`, `/clear`) from the proxy's real prices, with
   a recommendation: on the same task keep going or compact; for a new task, `/clear`. While the cache stays expired this
-  also shows on the dashboard and in `/penny tips`.
+  also shows on the dashboard and in `/frugal tips`.
 - It keeps counting after `/reload-plugins`: the last turn's end is kept per session.
 
 ## Session spend
@@ -51,7 +53,7 @@ The session figure comes from the session's own turns, not from the key's total 
 - **Expensive turn:** when a turn (with the subagents that ran during it) reaches the `expensiveTurn` threshold, you hear
   about it right at the turn's end.
 - **Parallel use:** the change in the key's spend during the session is kept as a check. When it is at least $1 and more
-  than 1.3× the session's own spend + $0.50, the report and `/penny tips` say the key is probably shared with another
+  than 1.3× the session's own spend + $0.50, the report and `/frugal tips` say the key is probably shared with another
   session or tool.
 - **What isn't in it:** small background calls outside turns (such as generating the session title). So the session
   figure can run slightly low; the authoritative, billed amounts are today and month, which come from LiteLLM.
@@ -59,7 +61,7 @@ The session figure comes from the session's own turns, not from the key's total 
 ## Savings tips
 
 Tips arrive as toasts (ordinary ones at most every 30 minutes, urgent ones right away, each only once), in the
-dashboard's Tip block, and all at once with `/penny tips`. They speak in the voice of your message pack.
+dashboard's Tip block, and all at once with `/frugal tips`. They speak in the voice of your message pack.
 
 - **During a session:** ⏳ an expired prompt cache (after a 5+ minute break the next turn rewrites the whole context —
   warned before you send, with an estimated price), 🐘 a fat context, 📦 huge Bash/Read outputs, 🔁 the same file read
@@ -89,31 +91,31 @@ Spend the coins in Old Penny's shop:
 | Captain Thrift (`pirate`) | 200 | | Buccaneer (`buccaneer`) | 90 |
 | Hoard Dragon (`dragon`) | 300 | | The Auditor (`auditor`) | 120 |
 
-`/penny xp` · `/penny shop` · `/penny buy <id>` (buys, then wears it) ·
-`/penny skin <id>` / `/penny pack <id>` (wear something you own; never buys)
+`/frugal xp` · `/frugal shop` · `/frugal buy <id>` (buys, then wears it) ·
+`/frugal skin <id>` / `/frugal pack <id>` (wear something you own; never buys)
 
 Coins are kept per machine, in the plugin's local store.
 
 ## Install
 
 ```
-/plugin install penny-pincher --marketplace siposzoltan03/penny-pincher
+/plugin install frugalitas --marketplace siposzoltan03/frugalitas
 ```
 
-Answer `y` to add the marketplace, then pick a scope. Updates: `/plugin update penny-pincher`, then `/reload-plugins`.
+Answer `y` to add the marketplace, then pick a scope. Updates: `/plugin update frugalitas`, then `/reload-plugins`.
 
 For local development from a clone:
 
 ```
-/plugin marketplace add ~/projects/penny-pincher
-/plugin install penny-pincher@penny-pincher
+/plugin marketplace add ~/projects/frugalitas
+/plugin install frugalitas@frugalitas
 ```
 
 With a local folder as the marketplace, `/reload-plugins` picks up edits.
 
 ## Settings
 
-`/config` → penny-pincher: session, daily and monthly budgets (USD, 0 = none), `warn`/`block` mode, the expensive-turn
+`/config` → frugalitas: session, daily and monthly budgets (USD, 0 = none), `warn`/`block` mode, the expensive-turn
 threshold, and fun mode.
 
 ## Development
@@ -121,5 +123,5 @@ threshold, and fun mode.
 ```
 claude plugin validate .
 claude plugin test .
-claude -p "/penny" --plugin-dir .   # with the LiteLLM environment variables set
+claude -p "/frugal" --plugin-dir .   # with the LiteLLM environment variables set
 ```
