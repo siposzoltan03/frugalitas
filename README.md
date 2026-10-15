@@ -8,9 +8,11 @@ spend bookkeeping. It is active only in sessions that run through LiteLLM (`ANTH
 
 ## What it does
 
-- **Status line:** `🪙 🙂 session ~$1.20/$20.00 · today $22.81/$60.00 · month $585/$800`, refreshed after every turn and
-  every 5 minutes. Session spend is the change in the key's total spend since the session started, so with parallel
-  sessions on the same key, take the `~` seriously.
+- **Status line:** `🪙 🙂 session $1.20/$20.00 · today $22.81/$60.00 · month $585/$800`, refreshed after every turn and
+  every 5 minutes. Session spend is the session's own turns (subagents included) priced token by token at the proxy's
+  `/model/info` prices, so other sessions or tools on the same key don't leak into it. Today and month are LiteLLM's
+  billed numbers. If the key spends clearly more than the session during it, the report and `/penny tips` say the key is
+  probably shared.
 - **Budget guard:** a toast at 80% and 100% of each budget (plus a native notification at 100%). In `block` mode, new
   prompts are refused over budget until `/penny allow` lifts it for the day.
 - **`/penny`:** monthly report with daily bars, per-model breakdown ($/MTok), cache hit rate and savings.
