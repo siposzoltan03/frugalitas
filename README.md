@@ -37,6 +37,25 @@ The prompt cache stays warm for 5 minutes after the last turn (an hour with `pro
   also shows on the dashboard and in `/penny tips`.
 - It keeps counting after `/reload-plugins`: the last turn's end is kept per session.
 
+## Session spend
+
+The session figure comes from the session's own turns, not from the key's total spend:
+
+- **What it counts:** every turn's tokens (the main thread and subagents): input, output, cache read and cache write, at
+  the proxy's `/model/info` prices. For Opus 5.5 that is, for example, $4 / $20 / $0.20 / $5 per million tokens.
+- **1-hour cache** (`promptCacheTtl: "1h"`): cache writes cost more, 2× input instead of the 5-minute cache's 1.25×, and
+  are priced that way.
+- **When it updates:** right at the end of every turn, without waiting for LiteLLM's batched spend writes.
+- **It persists:** it's kept per session, so `/reload-plugins` doesn't reset it.
+- **Before prices arrive:** a turn's cost waits in a queue and is counted as soon as the prices load.
+- **Expensive turn:** when a turn (with the subagents that ran during it) reaches the `expensiveTurn` threshold, you hear
+  about it right at the turn's end.
+- **Parallel use:** the change in the key's spend during the session is kept as a check. When it is at least $1 and more
+  than 1.3× the session's own spend + $0.50, the report and `/penny tips` say the key is probably shared with another
+  session or tool.
+- **What isn't in it:** small background calls outside turns (such as generating the session title). So the session
+  figure can run slightly low; the authoritative, billed amounts are today and month, which come from LiteLLM.
+
 ## Savings tips
 
 Tips arrive as toasts (ordinary ones at most every 30 minutes, urgent ones right away, each only once), in the
