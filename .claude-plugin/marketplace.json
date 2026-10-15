@@ -1,0 +1,12 @@
+{
+  "name": "penny-pincher",
+  "description": "Penny Pincher: a LiteLLM cost monitor plugin for Claude Code.",
+  "owner": { "name": "Zoltán Sipos" },
+  "plugins": [
+    {
+      "name": "penny-pincher",
+      "source": "./",
+      "description": "LiteLLM pay-as-you-go cost monitor for Claude Code."
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "name": "penny-pincher",
+  "version": "0.1.0",
+  "description": "Penny Pincher: LiteLLM pay-as-you-go cost monitor — status line, budget guard, /penny report, savings tips, coins and a shop.",
+  "author": { "name": "Zoltán Sipos" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "sessionBudget": {
+      "type": "number",
+      "title": "Session budget (USD)",
+      "description": "Budget for one Claude Code session, in dollars. 0 = none.",
+      "default": 20
+    },
+    "dailyBudget": {
+      "type": "number",
+      "title": "Daily budget (USD)",
+      "description": "Daily budget in dollars (UTC day, as LiteLLM counts it). Coins and quests need one. 0 = none.",
+      "default": 60
+    },
+    "monthlyBudget": {
+      "type": "number",
+      "title": "Monthly budget (USD)",
+      "description": "Monthly budget in dollars. 0 = none.",
+      "default": 800
+    },
+    "overBudget": {
+      "type": "string",
+      "title": "Over budget",
+      "description": "warn: just say so; block: refuse new prompts until /penny allow.",
+      "options": ["warn", "block"],
+      "default": "warn"
+    },
+    "expensiveTurn": {
+      "type": "number",
+      "title": "Expensive turn threshold (USD)",
+      "description": "A toast after any turn that cost more than this. 0 = off.",
+      "default": 1
+    },
+    "fun": {
+      "type": "boolean",
+      "title": "Fun mode",
+      "description": "Mood emoji, the mascot, quips and what your spend would have bought.",
+      "default": true
+    }
+  }
+}

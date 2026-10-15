@@ -1,0 +1,287 @@
+import { addMetrics, emptyMetrics } from './litellm'
+import type { Activity, Day, Metrics } from './litellm'
+
+export type Budgets = { session: number; daily: number; monthly: number }
+
+export type Spend = { session: number; today: number; month: number }
+
+export type Scope = keyof Budgets
+
+export const SCOPE_NAMES: Record<Scope, string> = { session: 'session', daily: 'daily', monthly: 'monthly' }
+
+export function money(usd: number): string {
+  if (usd >= 100) return `$${Math.round(usd)}`
+  return `$${usd.toFixed(2)}`
+}
+
+export function utcDate(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10)
+}
+
+export function addDays(date: string, days: number): string {
+  return utcDate(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000)
+}
+
+/** Each scope's spend as a fraction of its budget; scopes without a budget are left out. */
+export function ratios(spend: Spend, budgets: Budgets): Partial<Record<Scope, number>> {
+  const out: Partial<Record<Scope, number>> = {}
+  if (budgets.session > 0) out.session = spend.session / budgets.session
+  if (budgets.daily > 0) out.daily = spend.today / budgets.daily
+  if (budgets.monthly > 0) out.monthly = spend.month / budgets.monthly
+  return out
+}
+
+export function worst(spend: Spend, budgets: Budgets): { scope: Scope; ratio: number } | undefined {
+  let found: { scope: Scope; ratio: number } | undefined
+  for (const [scope, ratio] of Object.entries(ratios(spend, budgets)) as [Scope, number][]) {
+    if (!found || ratio > found.ratio) found = { scope, ratio }
+  }
+  return found
+}
+
+export function mood(ratio: number): string {
+  if (ratio < 0.5) return '😇'
+  if (ratio < 0.75) return '🙂'
+  if (ratio < 0.9) return '😬'
+  if (ratio < 1) return '🥵'
+  if (ratio < 1.5) return '🔥'
+  return '💀'
+}
+
+const part = (label: string, spent: number, budget: number) =>
+  budget > 0 ? `${label} ${money(spent)}/${money(budget)}` : `${label} ${money(spent)}`
+
+export function statusLine(spend: Spend, budgets: Budgets, fun: boolean, stale: boolean): string {
+  const w = worst(spend, budgets)
+  const head = fun ? `🪙 ${w ? mood(w.ratio) : '😇'}` : 'penny'
+  const parts = [
+    part('session ~', spend.session, budgets.session).replace('~ ', '~'),
+    part('today', spend.today, budgets.daily),
+    part('month', spend.month, budgets.monthly),
+  ]
+  return `${head} ${parts.join(' · ')}${stale ? ' ⚠︎ stale' : ''}`
+}
+
+// --- What the money would have bought ----------------------------------------
+
+const THINGS: { name: string; plural: string; usd: number; emoji: string }[] = [
+  { name: 'gumball', plural: 'gumballs', usd: 0.25, emoji: '🍬' },
+  { name: 'coffee', plural: 'coffees', usd: 4, emoji: '☕' },
+  { name: 'pizza', plural: 'pizzas', usd: 15, emoji: '🍕' },
+  { name: 'month of streaming', plural: 'months of streaming', usd: 18, emoji: '📺' },
+  { name: 'concert ticket', plural: 'concert tickets', usd: 90, emoji: '🎸' },
+  { name: 'weekend city break', plural: 'weekend city breaks', usd: 600, emoji: '🧳' },
+  { name: 'used car', plural: 'used cars', usd: 8000, emoji: '🚗' },
+]
+
+/** "≈ 3 coffees ☕": the dearest thing the amount still buys at least one of. */
+export function inKind(usd: number): string {
+  const thing = [...THINGS].reverse().find(t => usd >= t.usd) ?? THINGS[0]!
+  const count = usd / thing.usd
+  const shown = count >= 10 ? String(Math.round(count)) : count >= 1 ? count.toFixed(1).replace(/\.0$/, '') : count.toFixed(2)
+  return `≈ ${shown} ${shown === '1' ? thing.name : thing.plural} ${thing.emoji}`
+}
+
+// --- Savings tips -------------------------------------------------------------
+
+const perMTok = (m: Metrics) => {
+  const tokens = m.promptTokens + m.completionTokens
+  return tokens > 0 ? (m.spend / tokens) * 1e6 : 0
+}
+
+const shortModel = (name: string) => name.replace(/^.*\//, '')
+
+/** Advice read off today's real LiteLLM numbers; each tip names the numbers it rests on. */
+export function tips(today: Day | undefined, turnCacheWrite: number): string[] {
+  const out: string[] = []
+  if (turnCacheWrite > 150_000) {
+    out.push(`♻️ ${Math.round(turnCacheWrite / 1000)}k tokens of cache rewritten. /compact, and don't switch models mid-session.`)
+  }
+  if (!today) return out
+  const m = today.metrics
+  const input = m.promptTokens
+  if (input > 2_000_000 && m.cacheRead / input < 0.6) {
+    out.push(`🧊 Cache hit today is ${Math.round((m.cacheRead / input) * 100)}%. /clear and model switches hurt it.`)
+  }
+  const models = Object.entries(today.models).filter(([, mm]) => mm.spend > 0.5)
+  const opus = models.find(([n]) => /opus/i.test(n))
+  const cheaper = models.find(([n]) => /sonnet/i.test(n)) ?? models.find(([n]) => /haiku/i.test(n))
+  if (opus && m.spend > 0 && opus[1].spend / m.spend > 0.8) {
+    const ratio = cheaper && perMTok(cheaper[1]) > 0 ? perMTok(opus[1]) / perMTok(cheaper[1]) : 0
+    const ratioText = ratio > 1.2 ? ` (${ratio.toFixed(1)}x dearer per token)` : ''
+    out.push(`🧠 Today ${Math.round((opus[1].spend / m.spend) * 100)}% Opus${ratioText}. For routine work: /model sonnet.`)
+  }
+  return out
+}
+
+// --- Report -------------------------------------------------------------------
+
+const pad = (s: string, n: number) => (s.length >= n ? s : s + ' '.repeat(n - s.length))
+const lpad = (s: string, n: number) => (s.length >= n ? s : ' '.repeat(n - s.length) + s)
+
+function bar(value: number, max: number, width = 20): string {
+  const n = max > 0 ? Math.round((value / max) * width) : 0
+  return '█'.repeat(n) + '·'.repeat(width - n)
+}
+
+/** Consecutive days up to yesterday whose spend stayed within the daily budget. */
+export function streak(days: Day[], todayDate: string, dailyBudget: number): number {
+  if (dailyBudget <= 0) return 0
+  const byDate = new Map(days.map(d => [d.date, d.metrics.spend]))
+  let n = 0
+  let date = addDays(todayDate, -1)
+  const first = days[0]?.date
+  while (first && date >= first && (byDate.get(date) ?? 0) <= dailyBudget) {
+    n++
+    date = addDays(date, -1)
+  }
+  return n
+}
+
+export function report(opts: {
+  title: string
+  activity: Activity
+  spend: Spend
+  budgets: Budgets
+  todayDate: string
+  fun: boolean
+  streakDays: number
+}): string {
+  const { activity, budgets, fun } = opts
+  const lines: string[] = [opts.title, '']
+
+  const max = Math.max(0, ...activity.days.map(d => d.metrics.spend))
+  for (const d of activity.days) {
+    const over = budgets.daily > 0 && d.metrics.spend > budgets.daily
+    lines.push(
+      `${d.date}  ${lpad(money(d.metrics.spend), 7)}  ${bar(d.metrics.spend, max)}${over ? (fun ? ' 🔥' : ' !') : ''}`,
+    )
+  }
+  if (activity.days.length === 0) lines.push('(no spend in this period)')
+
+  const models = new Map<string, Metrics>()
+  for (const d of activity.days) {
+    for (const [name, m] of Object.entries(d.models)) models.set(name, addMetrics(models.get(name) ?? emptyMetrics(), m))
+  }
+  const total = activity.total
+  if (models.size > 0) {
+    lines.push('', 'By model:')
+    for (const [name, m] of [...models].sort((a, b) => b[1].spend - a[1].spend)) {
+      const share = total.spend > 0 ? Math.round((m.spend / total.spend) * 100) : 0
+      lines.push(
+        `  ${pad(shortModel(name), 22)} ${lpad(money(m.spend), 7)}  ${lpad(String(share), 3)}%  ${lpad(perMTok(m).toFixed(2), 6)} $/MTok  ${m.requests} requests`,
+      )
+    }
+  }
+
+  lines.push('', `Total: ${money(total.spend)} · ${total.requests} requests`)
+  if (total.promptTokens > 0) {
+    lines.push(
+      `Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% hit, ${money(total.cacheSaved)} saved${fun ? ' 🦸' : ''}`,
+    )
+  }
+  lines.push(
+    `Now: ${statusLine(opts.spend, budgets, fun, false)}`,
+  )
+  if (fun) {
+    lines.push(`That would have bought: ${inKind(total.spend)}`)
+    if (opts.streakDays >= 2) lines.push(`🏆 ${opts.streakDays} days in a row within the daily budget. Old Penny is proud!`)
+  }
+  return lines.join('\n')
+}
+
+// --- Raster helpers ----------------------------------------------------------
+
+const DEFAULT_BG = 0x01000000
+
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff
+  const r = Math.round(ar + (br - ar) * t)
+  const g = Math.round(ag + (bg - ag) * t)
+  const bl = Math.round(ab + (bb - ab) * t)
+  return (r << 16) | (g << 8) | bl
+}
+
+export function ratioColor(ratio: number): number {
+  if (ratio < 0.5) return 0x22c55e // green
+  if (ratio < 0.8) return lerpColor(0x22c55e, 0xeab308, (ratio - 0.5) / 0.3) // green→yellow
+  if (ratio < 1.0) return lerpColor(0xeab308, 0xef4444, (ratio - 0.8) / 0.2) // yellow→red
+  return 0xef4444 // red
+}
+
+/** Build base64 Raster cells for a horizontal gauge bar. */
+export function gaugeRasterCells(width: number, ratio: number): string {
+  const filled = Math.min(width, Math.round(ratio * width))
+  const fg = ratioColor(ratio)
+  const words = new Uint32Array(width * 3)
+  for (let i = 0; i < width; i++) {
+    const base = i * 3
+    words[base] = i < filled ? 0x2588 : 0x2591 // █ or ░
+    words[base + 1] = i < filled ? fg : 0x555555
+    words[base + 2] = DEFAULT_BG
+  }
+  return uint32ToBase64(words)
+}
+
+/** Build base64 Raster cells for a sparkline (columns × rows). */
+export function sparklineRasterCells(values: number[], cols: number, rows: number, budget: number): string {
+  const max = Math.max(budget, ...values)
+  const words = new Uint32Array(cols * rows * 3)
+  for (let col = 0; col < cols; col++) {
+    const v = col < values.length ? values[col]! : 0
+    const height = max > 0 ? Math.round((v / max) * rows) : 0
+    const over = budget > 0 && v > budget
+    const fg = over ? 0xef4444 : 0x3b82f6
+    for (let row = 0; row < rows; row++) {
+      const base = (row * cols + col) * 3
+      const fromBottom = rows - 1 - row
+      if (fromBottom < height) {
+        words[base] = 0x2588 // █
+        words[base + 1] = fg
+      } else {
+        words[base] = 0x20 // space
+        words[base + 1] = DEFAULT_BG
+      }
+      words[base + 2] = DEFAULT_BG
+    }
+  }
+  return uint32ToBase64(words)
+}
+
+/** Build base64 Raster cells for a model share bar (stacked horizontal). */
+export function modelBarRasterCells(shares: { ratio: number; color: number }[], width: number): string {
+  const words = new Uint32Array(width * 3)
+  let col = 0
+  for (const s of shares) {
+    const end = Math.min(width, col + Math.max(1, Math.round(s.ratio * width)))
+    for (; col < end && col < width; col++) {
+      const base = col * 3
+      words[base] = 0x2588
+      words[base + 1] = s.color
+      words[base + 2] = DEFAULT_BG
+    }
+  }
+  for (; col < width; col++) {
+    const base = col * 3
+    words[base] = 0x2591
+    words[base + 1] = 0x555555
+    words[base + 2] = DEFAULT_BG
+  }
+  return uint32ToBase64(words)
+}
+
+export const MODEL_COLORS = [0x3b82f6, 0xa855f7, 0x22c55e, 0xf97316, 0xeab308, 0x06b6d4, 0xec4899]
+
+/** 1×1 Raster cell of a single color (for legend dots matching bar colors exactly). */
+export function colorDotRasterCells(color: number): string {
+  const words = Uint32Array.of(0x2588, color, DEFAULT_BG)
+  return uint32ToBase64(words)
+}
+
+export function uint32ToBase64(arr: Uint32Array): string {
+  const bytes = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!)
+  return btoa(binary)
+}
