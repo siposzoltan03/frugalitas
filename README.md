@@ -30,8 +30,10 @@ All days are UTC days, as LiteLLM counts them.
 
 ## Prompt-cache countdown
 
-The prompt cache stays warm for 5 minutes after the last turn (an hour with `promptCacheTtl: "1h"` or
-`CLAUDE_CODE_PROMPT_CACHE_TTL=1h`). After that, the next turn rewrites the whole context at cache-write price.
+The prompt cache stays warm for 5 minutes (an hour with `promptCacheTtl: "1h"` or `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`),
+counted from the start of the last model request of a turn, not from the turn's end: each request restarts the cache's
+lifetime when it starts, so a long final answer eats into it. The countdown starts there too. After that, the next turn
+rewrites the whole context at cache-write price.
 
 - **Status line:** `… · ⏳ cache 3:42`, in the last minute `⌛ cache 0:42!`, then `❄️ cache expired`. It doesn't count while
   a turn runs, since the cache is being refreshed then.
