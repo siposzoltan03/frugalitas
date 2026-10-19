@@ -1,6 +1,6 @@
 {
   "name": "frugalitas",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Frugalitas: LiteLLM pay-as-you-go cost monitor — status line, budget guard, /frugal report, savings tips, coins and a shop.",
   "author": { "name": "Zoltán Sipos" },
   "types": "./types/index.d.ts",
