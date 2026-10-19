@@ -39,6 +39,8 @@ status line and the keep/compact/clear advice say so right away.
 
 - **Status line:** `… · ⏳ cache 3:42`, in the last minute `⌛ cache 0:42!`, then `❄️ cache expired`. It doesn't count while
   a turn runs, since the cache is being refreshed then.
+- **Dashboard model and context:** the session's model with its prices per million tokens, and how full the
+  context window is (`Context: 182k / 1M ▰▰▱▱▱▱▱▱▱▱ 18%`, red from 80%) with what every turn pays at least to read it.
 - **Dashboard:** under the "Cache: X% hit" line, `⏳ Cache: 3:42 ▰▰▰▰▰▰▰▱▱▱`, red in the last minute.
 - **~30 s before expiry** (for contexts over 50k tokens): a toast with the price of the rewrite, and what a `/compact`
   would cost right now while the cache is still warm. If the rewrite is $0.50 or more, a native notification too.
