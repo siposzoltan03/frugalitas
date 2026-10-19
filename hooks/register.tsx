@@ -513,6 +513,7 @@ export const register: Register = (on, options) => {
       name: 'frugal',
       description: 'LiteLLM cost report: /frugal [<N> | refresh | allow | panel | tips | xp | shop | buy <id>]',
     })
+    await $.ui.open({ id: PANE_ID, title: '🪙 Frugalitas' }).catch(() => {})
     conn = makeConn({
       baseUrl: await $.env.get('ANTHROPIC_BASE_URL'),
       authToken: await $.env.get('ANTHROPIC_AUTH_TOKEN'),
