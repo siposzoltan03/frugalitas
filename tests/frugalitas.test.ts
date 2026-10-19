@@ -40,6 +40,8 @@ import {
   contextLine,
   modelLine,
   tokenCount,
+  handoverMarkdown,
+  handoverTitle,
 } from '../hooks/advice'
 
 const NOW = Date.parse('2026-10-13T12:00:00Z')
@@ -537,3 +539,19 @@ describe('the dashboard\'s model and context lines', () => {
   })
 })
 
+describe('saved handovers', () => {
+  const text = '## Goal\n- Make vendor publish retries idempotent per vendor id\n\n## Next steps\n1. Add the test'
+
+  test('a handover file says when, by whom and where', () => {
+    const md = handoverMarkdown({ id: 'mgx3k2a1', at: Date.UTC(2026, 9, 19, 15, 40), model: 'claude-haiku-4-5', cwd: '/repo', text })
+    expect(md.startsWith('# Handover mgx3k2a1\n\n- Written: 2026-10-19 15:40 UTC\n- By: claude-haiku-4-5\n- Project: /repo')).toBe(true)
+    expect(md).toContain('## Goal')
+  })
+
+  test('its one-line title comes from the Goal section', () => {
+    expect(handoverTitle(text)).toBe('Make vendor publish retries idempotent per vendor id')
+    expect(handoverTitle('## Cél\n**Az árazás javítása**')).toBe('Az árazás javítása')
+    expect(handoverTitle('Just one line')).toBe('Just one line')
+    expect(handoverTitle('x'.repeat(200)).length).toBe(80)
+  })
+})

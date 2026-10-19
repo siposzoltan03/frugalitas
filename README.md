@@ -60,8 +60,15 @@ too. `/frugal restart` does the same job with a small model instead:
    current state, decisions, dead ends, open questions, next steps and files;
 3. it runs `/clear` and continues from the handover in the now small conversation.
 
-`/frugal restart sonnet` uses a Sonnet for a session with tricky reasoning. Every handover is kept under an id
-(`handover:<id>` in the plugin's store), so nothing is lost if the restart stops half-way.
+`/frugal restart sonnet` uses a Sonnet for a session with tricky reasoning.
+
+Every handover is saved as Markdown in `~/.claude/handovers/<id>.md` (time, model, project folder and the text), so
+nothing is lost if the restart stops half-way and you can pick it up again later:
+
+- `/frugal handovers` lists the recent ones, `/frugal handovers <id>` shows one;
+- `/frugal resume <id>` continues from one in the current session, for example a new session the next day.
+
+Until teambrain is available these local files are the handovers' home; once it is, they can go there too.
 
 It is only suggested, never done on its own: when the cache has expired, the context is at least 50k tokens and the
 restart is clearly cheaper than both keeping the context and `/compact` over the next 10 turns. The

@@ -3,7 +3,7 @@ import type { Register } from 'claude-code'
 
 import { addMetrics, emptyMetrics, fetchActivity, fetchKeySpend, fetchPrices, makeConn, priceFor } from './litellm'
 import type { Activity, Conn, Day, Fetch, Metrics, Prices } from './litellm'
-import type { TokenUsage } from './advice'
+import type { Handover, TokenUsage } from './advice'
 import {
   cacheExpiryWarning,
   cacheSoonWarning,
@@ -19,7 +19,10 @@ import {
   CONDENSE_RATIO,
   condenseTranscript,
   HANDOVER_SYSTEM,
+  HANDOVER_DIR,
+  handoverMarkdown,
   handoverPrompt,
+  handoverTitle,
   pickSummaryModel,
   restartViaSummaryCost,
   resumePrompt,
@@ -767,6 +770,7 @@ export const register: Register = (on, options) => {
           '/frugal panel      – open the cost dashboard',
           "/frugal tips       – every current savings tip and today's quest",
           '/frugal restart    – a small model writes a handover, then /clear and continue from it (… sonnet for a Sonnet)',
+          '/frugal handovers  – recent handovers · /frugal handovers <id> shows one · /frugal resume <id> continues from it',
           '/frugal xp         – your rank and coins',
           '/frugal shop       – skins and message packs',
           '/frugal buy <id>   – buy with coins (and wear it)',
@@ -792,7 +796,12 @@ export const register: Register = (on, options) => {
       if (!reply.isAnswered) return { text: `Frugalitas: the handover could not be written (${reply.reason}); nothing was cleared.` }
       const now = await $.clock.now()
       const id = now.toString(36)
-      await $.store.set(`handover:${id}`, { at: now, model: small.name, text: reply.text })
+      const home = await $.env.get('HOME')
+      const path = home ? `${home}/${HANDOVER_DIR}/${id}.md` : undefined
+      const cwd = await $.session.cwd().catch(() => '')
+      const handover: Handover = { id, at: now, model: small.name, cwd, text: reply.text, ...(path ? { path } : {}) }
+      await $.store.set(`handover:${id}`, handover)
+      if (path) await $.fs.write(path, handoverMarkdown(handover)).catch(() => {})
       const cost =
         (reply.usage.input_tokens ?? 0) * small.price.input + (reply.usage.output_tokens ?? 0) * small.price.output
       // Run after this command has returned: clear the conversation, then continue from the handover.
@@ -802,7 +811,33 @@ export const register: Register = (on, options) => {
           await $.prompt.submit({ text: resumePrompt(id, reply.text) })
         })().catch(err => $io.toast(`Frugalitas: the restart stopped half-way (${String(err)}); handover ${id} is saved.`, 20_000))
       })
-      return { text: `🧳 Handover ${id} written by ${small.name} (~${money(cost)}). Clearing the conversation and continuing from it…` }
+      return { text: `🧳 Handover ${id} written by ${small.name} (~${money(cost)})${path ? `, saved to ${path}` : ''}. Clearing the conversation and continuing from it…` }
+    }
+
+    if (arg === 'handovers' || arg.startsWith('handovers ') || arg.startsWith('resume ')) {
+      const all: Handover[] = []
+      for (const key of await $.store.keys()) {
+        if (!key.startsWith('handover:')) continue
+        const h = (await $.store.get(key)) as Handover | undefined
+        if (h?.text) all.push({ ...h, id: h.id ?? key.slice('handover:'.length) })
+      }
+      all.sort((a, b) => b.at - a.at)
+      const [what, id = ''] = arg.split(/\s+/)
+      if (!id) {
+        if (all.length === 0) return { text: 'Frugalitas: no handovers yet. /frugal restart writes one.' }
+        const rows = all.slice(0, 10).map(h => {
+          const when = new Date(h.at).toISOString().replace('T', ' ').slice(0, 16)
+          return `  ${h.id} · ${when} · ${h.model.replace(/^.*\//, '')} · ${handoverTitle(h.text)}`
+        })
+        return { text: ['🧳 Handovers (newest first)', ...rows, '', 'Show one: /frugal handovers <id> · continue from it: /frugal resume <id> · files: ~/.claude/handovers/'].join('\n') }
+      }
+      const found = all.find(h => h.id === id)
+      if (!found) return { text: `Frugalitas: no handover ${id}. List them: /frugal handovers` }
+      if (what === 'resume') {
+        $.clock.after(50, () => void $.prompt.submit({ text: resumePrompt(found.id, found.text) }).catch(() => {}))
+        return { text: `🧳 Continuing from handover ${found.id}…` }
+      }
+      return { text: [found.path ? `File: ${found.path}` : '', handoverMarkdown(found)].filter(Boolean).join('\n\n') }
     }
 
     if (arg === 'panel' || arg === 'pane' || arg === 'dashboard') {
