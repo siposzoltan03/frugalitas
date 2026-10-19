@@ -42,10 +42,29 @@ status line and the keep/compact/clear advice say so right away.
 - **Dashboard:** under the "Cache: X% hit" line, `⏳ Cache: 3:42 ▰▰▰▰▰▰▰▱▱▱`, red in the last minute.
 - **~30 s before expiry** (for contexts over 50k tokens): a toast with the price of the rewrite, and what a `/compact`
   would cost right now while the cache is still warm. If the rewrite is $0.50 or more, a native notification too.
-- **At expiry:** the next 10 turns priced three ways (keep going, `/compact`, `/clear`) from the proxy's real prices, with
-  a recommendation: on the same task keep going or compact; for a new task, `/clear`. While the cache stays expired this
+- **At expiry:** the next 10 turns priced three or four ways (keep going, `/compact`, `/frugal restart` when it is
+  clearly cheaper, `/clear`) from the proxy's real prices, with
+  a recommendation: on the same task keep going, compact or restart; for a new task, `/clear`. While the cache stays expired this
   also shows on the dashboard and in `/frugal tips`.
-- It keeps counting after `/reload-plugins`: the last turn's end is kept per session.
+- It keeps counting after `/reload-plugins`: the countdown's start is kept per session.
+
+## Restart from a handover
+
+Once the cache has expired, continuing a big conversation rewrites all of it on your main model, and a `/compact` does
+too. `/frugal restart` does the same job with a small model instead:
+
+1. it reads the conversation, keeping every word said and clipping long tool outputs to their head and tail;
+2. the cheapest Haiku (or, if the conversation is too big for it, Sonnet) that the proxy serves writes a handover: goal,
+   current state, decisions, dead ends, open questions, next steps and files;
+3. it runs `/clear` and continues from the handover in the now small conversation.
+
+`/frugal restart sonnet` uses a Sonnet for a session with tricky reasoning. Every handover is kept under an id
+(`handover:<id>` in the plugin's store), so nothing is lost if the restart stops half-way.
+
+It is only suggested, never done on its own: when the cache has expired, the context is at least 50k tokens and the
+restart is clearly cheaper than both keeping the context and `/compact` over the next 10 turns. The
+keep / compact / restart / clear comparison and the warning before you send then name it with its price. For a new task,
+`/clear` is still the cheapest.
 
 ## Session spend
 
