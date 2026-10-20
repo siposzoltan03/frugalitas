@@ -6,7 +6,7 @@ import { fetchActivity, makeConn, parseCustomHeaders, priceFor } from '../hooks/
 import { MASCOT_COLUMNS, MASCOT_PIXEL_ROWS, MASCOT_ROWS, mascotMood, mascotPixels, mascotRasterCells } from '../hooks/mascot'
 import { fill, PACKS, packById, voice } from '../hooks/packs'
 import { SKINS, skinById } from '../hooks/skins'
-import { balance, buy, credit, creditFrom, dayXp, newLedger, rankOf, wear, worn } from '../hooks/xp'
+import { balance, buy, credit, creditFrom, dayXp, newLedger, mergeFukarlec, rankOf, wear, worn } from '../hooks/xp'
 import { setMode } from '../hooks/mode'
 import type { ShopItem } from '../hooks/xp'
 import type { Day, Prices } from '../hooks/litellm'
@@ -284,6 +284,28 @@ describe('modes', () => {
     } finally {
       setMode('frugalitas')
     }
+  })
+})
+
+describe('moving over from Fukarléc', () => {
+  test('a day both plugins credited counts once; purchases add up; the outfit goes to Fukarléc mode', async () => {
+    const own = { ...newLedger('2026-10-15', 0), days: { '2026-10-10': 20, '2026-10-11': 0 }, spent: 150, owned: ['skin:accountant'] }
+    const hu = {
+      ...newLedger('2026-10-15', 0),
+      since: '2026-09-01',
+      days: { '2026-10-10': 20, '2026-10-12': 25 },
+      quests: { '2026-10-12': 5 },
+      spent: 90,
+      owned: ['skin:csikos'],
+      skin: 'csikos',
+      pack: 'betyar',
+    }
+    const merged = mergeFukarlec(own, hu)
+    expect(merged.days).toEqual({ '2026-10-10': 20, '2026-10-11': 0, '2026-10-12': 25 })
+    expect(balance(merged)).toBe(20 + 25 + 5 - 240)
+    expect(merged.owned).toEqual(['skin:accountant', 'skin:csikos'])
+    expect(merged.since).toBe('2026-09-01')
+    expect([merged.skin, merged.fukarlec.skin, merged.fukarlec.pack]).toEqual(['miser', 'csikos', 'betyar'])
   })
 })
 

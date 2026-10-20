@@ -218,6 +218,27 @@ export function wear(ledger: Ledger, item: ShopItem): { ledger: Ledger } | { err
   return { ledger: item.kind === 'skin' ? { ...ledger, skin: item.id } : { ...ledger, pack: item.id } }
 }
 
+/**
+ * Frugalitas' ledger with the one an old Fukarléc install exported folded in. Both read the same LiteLLM days,
+ * so a day both credited counts once; purchases add up, and Fukarléc's outfit becomes Fukarléc mode's.
+ */
+export function mergeFukarlec(own: Ledger, hu: Ledger): Ledger {
+  const maxed = (a: Record<string, number>, b: Record<string, number>) => {
+    const out = { ...a }
+    for (const [d, xp] of Object.entries(b)) out[d] = Math.max(xp, out[d] ?? 0)
+    return out
+  }
+  return {
+    ...own,
+    since: hu.since < own.since ? hu.since : own.since,
+    days: maxed(own.days, hu.days),
+    quests: maxed(own.quests, hu.quests),
+    spent: own.spent + hu.spent,
+    owned: [...new Set([...own.owned, ...hu.owned])],
+    fukarlec: { skin: hu.skin, pack: hu.pack },
+  }
+}
+
 /** What the current mode wears. */
 export function worn(ledger: Ledger): { skin: string; pack: string } {
   return mode() === 'fukarlec' ? ledger.fukarlec : { skin: ledger.skin, pack: ledger.pack }

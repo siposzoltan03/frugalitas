@@ -70,7 +70,7 @@ import { MASCOT_COLUMNS, MASCOT_ROWS, mascotMood, mascotRasterCells } from './ma
 import { fill, modePacks, packById, pickLine, voice } from './packs'
 import type { Pack } from './packs'
 import { modeSkins, skinById } from './skins'
-import { asLedger, balance, buy, credit, creditFrom, earned, owns, progressBar, rankOf, wear, worn } from './xp'
+import { asLedger, balance, buy, credit, creditFrom, earned, owns, mergeFukarlec, progressBar, rankOf, wear, worn } from './xp'
 import type { Ledger, ShopItem } from './xp'
 
 const POLL_MS = 5 * 60_000
@@ -121,6 +121,10 @@ const shop = (): readonly ShopItem[] => [
 
 /** The mode kept across sessions, set with `/frugal mode`. */
 const MODE_KEY = 'mode'
+
+/** Where the last Fukarléc release exports its ledger, under the home folder, and the mark that it was read. */
+const FUKARLEC_EXPORT = '.claude/fukarlec-ledger.json'
+const FUKARLEC_IMPORTED = 'fukarlecImported'
 
 const xpView = (l: Ledger): XpView => ({ ...worn(l), earned: earned(l), balance: balance(l) })
 
@@ -543,7 +547,28 @@ export const register: Register = (on, options) => {
       model: () => $.session.model(),
       redraw: () => $.ui.invalidate('ui.render'),
     }
-    setMode(asMode((await $.store.get(MODE_KEY) as { mode?: unknown } | undefined)?.mode) ?? asMode(options.mode) ?? 'frugalitas')
+    const storedMode = asMode(((await $.store.get(MODE_KEY)) as { mode?: unknown } | undefined)?.mode)
+    setMode(storedMode ?? asMode(options.mode) ?? 'frugalitas')
+    // Fukarléc used to be a plugin of its own: its last release exports its ledger, folded in here once.
+    const home = await $.env.get('HOME')
+    const exported = home ? `${home}/${FUKARLEC_EXPORT}` : undefined
+    if (exported && !(await $.store.get(FUKARLEC_IMPORTED)) && (await $.fs.exists(exported).catch(() => false))) {
+      try {
+        const now = await $.clock.now()
+        const today = utcDate(now)
+        const data = JSON.parse(await $.fs.read(exported)) as { ledger?: unknown }
+        const merged = mergeFukarlec(asLedger(await $.store.get(XP_KEY), today, now), asLedger(data.ledger, today, now))
+        await $.store.set(XP_KEY, merged)
+        await $.store.set(FUKARLEC_IMPORTED, { importedAt: now })
+        if (!storedMode) {
+          setMode('fukarlec')
+          await $.store.set(MODE_KEY, { mode: 'fukarlec', updatedAt: now })
+        }
+        $.ui.toast(`🪙 A Fukarléc garasai átköltöztek: ${balance(merged)} garas a zsebben. Mód: ${mode()} (/frugal mode).`, { timeoutMs: 12_000 })
+      } catch (err) {
+        $.ui.log(`frugalitas: Fukarléc import failed: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
+      }
+    }
     await $.command.register({
       name: 'frugal',
       description: 'LiteLLM cost report: /frugal [<N> | refresh | allow | panel | tips | restart | handovers | xp | shop | buy <id> | mode <frugalitas|fukarlec>]',
