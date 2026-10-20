@@ -404,6 +404,8 @@ const opusShare = (d: Day) => {
 }
 const cacheHit = (d: Day) => (d.metrics.promptTokens > 0 ? d.metrics.cacheRead / d.metrics.promptTokens : 0)
 const pct = (x: number) => `${Math.round(x * 100)}%`
+// A request's price grows with the context it carries, so a lean context keeps it low.
+const perRequest = (d: Day) => (d.metrics.requests > 0 ? d.metrics.spend / d.metrics.requests : 0)
 const modelsUsed = (d: Day) => Object.values(d.models).filter(m => m.spend > 0.05).length
 
 export const QUEST_XP = 5
@@ -413,7 +415,7 @@ export const QUESTS: readonly Quest[] = [
   { id: 'cache', text: 'keep the cache hit above 85%', done: d => cacheHit(d) >= 0.85, progress: d => `today ${pct(cacheHit(d))}` },
   { id: 'half', text: 'spend less than half the daily budget', done: (d, b) => b > 0 && d.metrics.spend <= b / 2, progress: d => `$${d.metrics.spend.toFixed(2)}` },
   { id: 'models', text: 'use at most 2 models', done: d => modelsUsed(d) <= 2, progress: d => `${modelsUsed(d)} models` },
-  { id: 'errors', text: 'have zero failed requests', done: d => d.metrics.failed === 0, progress: d => `${d.metrics.failed} failed` },
+  { id: 'perRequest', text: 'keep the average request under $0.15', done: d => perRequest(d) < 0.15, progress: d => `$${perRequest(d).toFixed(2)}/request` },
 ]
 
 /** The day's quest, the same for everyone on that day. */

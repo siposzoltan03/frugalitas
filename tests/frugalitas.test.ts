@@ -474,6 +474,12 @@ describe('advice', () => {
     expect(cache.done(day, 25)).toBe(false)
   })
 
+  test('the per-request quest rewards a lean context', async () => {
+    const q = QUESTS.find(x => x.id === 'perRequest')!
+    expect(q.done({ date: '2026-10-20', metrics: metrics(1.36, { requests: 17 }), models: {} } as Day, 25)).toBe(true)
+    expect(q.done({ date: '2026-10-19', metrics: metrics(40, { requests: 210 }), models: {} } as Day, 25)).toBe(false)
+  })
+
   test('tips speak in the pack voice', async () => {
     expect(voice('📈 At this pace it gets dear.', packById('miser'), 2)).toBe('📈 At this pace it gets dear.')
     expect(voice('📈 At this pace it gets dear.', packById('grandma'), 0)).toBe('📈 Sweetie, at this pace it gets dear.')
