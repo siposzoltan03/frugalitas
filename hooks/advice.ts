@@ -390,23 +390,30 @@ export function compactEffectTip(before: readonly number[], after: readonly numb
 
 // --- Daily quests ---------------------------------------------------------------
 
-export type Quest = { id: string; text: string; done: (day: Day, dailyBudget: number) => boolean }
+export type Quest = {
+  id: string
+  text: string
+  done: (day: Day, dailyBudget: number) => boolean
+  /** The day's own measured value, so the quest line shows how far along it is. */
+  progress: (day: Day) => string
+}
 
 const opusShare = (d: Day) => {
   const opus = Object.entries(d.models).filter(([n]) => /opus/i.test(n)).reduce((n, [, m]) => n + m.spend, 0)
   return d.metrics.spend > 0 ? opus / d.metrics.spend : 0
 }
 const cacheHit = (d: Day) => (d.metrics.promptTokens > 0 ? d.metrics.cacheRead / d.metrics.promptTokens : 0)
+const pct = (x: number) => `${Math.round(x * 100)}%`
 const modelsUsed = (d: Day) => Object.values(d.models).filter(m => m.spend > 0.05).length
 
 export const QUEST_XP = 5
 
 export const QUESTS: readonly Quest[] = [
-  { id: 'opus', text: 'keep Opus under 50% of the spend', done: d => opusShare(d) < 0.5 },
-  { id: 'cache', text: 'keep the cache hit above 85%', done: d => cacheHit(d) >= 0.85 },
-  { id: 'half', text: 'spend less than half the daily budget', done: (d, b) => b > 0 && d.metrics.spend <= b / 2 },
-  { id: 'models', text: 'use at most 2 models', done: d => modelsUsed(d) <= 2 },
-  { id: 'errors', text: 'have zero failed requests', done: d => d.metrics.failed === 0 },
+  { id: 'opus', text: 'keep Opus under 50% of the spend', done: d => opusShare(d) < 0.5, progress: d => `${pct(opusShare(d))} Opus` },
+  { id: 'cache', text: 'keep the cache hit above 85%', done: d => cacheHit(d) >= 0.85, progress: d => `today ${pct(cacheHit(d))}` },
+  { id: 'half', text: 'spend less than half the daily budget', done: (d, b) => b > 0 && d.metrics.spend <= b / 2, progress: d => `$${d.metrics.spend.toFixed(2)}` },
+  { id: 'models', text: 'use at most 2 models', done: d => modelsUsed(d) <= 2, progress: d => `${modelsUsed(d)} models` },
+  { id: 'errors', text: 'have zero failed requests', done: d => d.metrics.failed === 0, progress: d => `${d.metrics.failed} failed` },
 ]
 
 /** The day's quest, the same for everyone on that day. */

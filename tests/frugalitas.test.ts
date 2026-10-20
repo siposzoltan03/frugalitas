@@ -467,6 +467,13 @@ describe('advice', () => {
     }
   })
 
+  test('the cache quest shows the day\'s own hit rate, not the month\'s', async () => {
+    const cache = QUESTS.find(q => q.id === 'cache')!
+    const day = { date: '2026-10-20', metrics: { ...metrics(1), promptTokens: 828_378, cacheRead: 552_953 }, models: {} } as Day
+    expect(cache.progress(day)).toBe('today 67%')
+    expect(cache.done(day, 25)).toBe(false)
+  })
+
   test('tips speak in the pack voice', async () => {
     expect(voice('📈 At this pace it gets dear.', packById('miser'), 2)).toBe('📈 At this pace it gets dear.')
     expect(voice('📈 At this pace it gets dear.', packById('grandma'), 0)).toBe('📈 Sweetie, at this pace it gets dear.')

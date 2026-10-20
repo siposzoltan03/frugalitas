@@ -445,7 +445,7 @@ export const register: Register = (on, options) => {
   function questLine(s: Snapshot): string | undefined {
     if (budgets.daily <= 0) return undefined
     const q = questFor(s.date)
-    const sofar = s.today ? (q.done(s.today, budgets.daily) ? ' · so far ✅' : ' · so far ❌') : ''
+    const sofar = s.today ? ` · so far ${q.progress(s.today)} ${q.done(s.today, budgets.daily) ? '✅' : '❌'}` : ''
     return `🎯 Today's quest: ${q.text} (+${QUEST_XP} coins)${sofar}`
   }
 
@@ -1065,7 +1065,7 @@ export const register: Register = (on, options) => {
             {contextLine(contextTokens, contextWindow, priceOf(sessionModel), progressBar(contextTokens / contextWindow, 10))}
           </Text>
         )}
-        <Text dimColor>Cache: {cacheHit}% hit, {money(activity.total.cacheSaved)} saved</Text>
+        <Text dimColor>Cache (month): {cacheHit}% hit, {money(activity.total.cacheSaved)} saved</Text>
         {cacheWarmSinceAt === 0 && !isTurnRunning && <Text dimColor>⏳ Cache: starts when the next turn ends</Text>}
         {isTurnRunning && <Text dimColor>⏳ Cache: fresh (turn running)</Text>}
         {cacheLeft !== undefined && (
