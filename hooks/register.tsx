@@ -564,7 +564,10 @@ export const register: Register = (on, options) => {
           setMode('fukarlec')
           await $.store.set(MODE_KEY, { mode: 'fukarlec', updatedAt: now })
         }
-        $.ui.toast(`🪙 A Fukarléc garasai átköltöztek: ${balance(merged)} garas a zsebben. Mód: ${mode()} (/frugal mode).`, { timeoutMs: 12_000 })
+        // Said a little later: a toast drawn while the session screen is still coming up gets lost.
+        const moved = `🪙 A Fukarléc garasai átköltöztek: ${balance(merged)} garas a zsebben. Mód: ${mode()} (/frugal mode).`
+        void $.clock.after(3000, () => $.ui.toast(moved, { timeoutMs: 15_000 }))
+        void $.ui.notify(moved, { title: 'Frugalitas' }).catch(() => {})
       } catch (err) {
         $.ui.log(`frugalitas: Fukarléc import failed: ${err instanceof Error ? err.message : String(err)}`, { to: 'debug' })
       }
