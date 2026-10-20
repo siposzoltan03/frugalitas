@@ -2,7 +2,9 @@
   "name": "frugalitas",
   "version": "0.1.5",
   "description": "Frugalitas: LiteLLM pay-as-you-go cost monitor — status line, budget guard, /frugal report, savings tips, coins and a shop.",
-  "author": { "name": "Zoltán Sipos" },
+  "author": {
+    "name": "Zoltán Sipos"
+  },
   "types": "./types/index.d.ts",
   "userConfig": {
     "sessionBudget": {
@@ -27,7 +29,10 @@
       "type": "string",
       "title": "Over budget",
       "description": "warn: just say so; block: refuse new prompts until /frugal allow.",
-      "options": ["warn", "block"],
+      "options": [
+        "warn",
+        "block"
+      ],
       "default": "warn"
     },
     "expensiveTurn": {
@@ -41,6 +46,22 @@
       "title": "Fun mode",
       "description": "Mood emoji, the mascot, quips and what your spend would have bought.",
       "default": true
+    },
+    "mode": {
+      "type": "string",
+      "title": "Mode",
+      "description": "frugalitas: English, Old Penny, USD; fukarlec: Hungarian, Fukar bácsi, HUF. /frugal mode switches it live.",
+      "options": [
+        "frugalitas",
+        "fukarlec"
+      ],
+      "default": "frugalitas"
+    },
+    "hufRate": {
+      "type": "number",
+      "title": "USD/HUF rate",
+      "description": "Fukarléc mode: for what your spend would have bought, in forints.",
+      "default": 350
     }
   }
 }

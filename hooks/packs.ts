@@ -1,4 +1,5 @@
 import type { MascotMood } from './mascot'
+import { type Mode, mode } from './mode'
 
 // Message packs: who is talking in the toasts and in the pane's speech bubble.
 // Placeholders: {scope} (session/daily/monthly), {pct}, {spent}, {budget}, {cost},
@@ -149,9 +150,161 @@ const auditor: Pack = {
   },
 }
 
-export const PACKS: readonly Pack[] = [miser, grandma, bartender, buccaneer, auditor]
+// --- Fukarléc mode ------------------------------------------------------------
 
-export const packById = (id: string | undefined): Pack => PACKS.find(p => p.id === id) ?? miser
+const paraszt: Pack = {
+  id: 'paraszt',
+  name: 'Fukar bácsi',
+  description: 'Az eredeti tanyasi bölcsességek.',
+  price: 0,
+  warn: [
+    '🧐 Lassan a testtel! A {scope} keret {pct}%-a elment.',
+    '🤨 Fukar bácsi szemöldöke felszaladt: {scope} keret {pct}%.',
+    '🪙 Számolj csak utána: a {scope} keretből {pct}% már a LiteLLM-é.',
+  ],
+  over: [
+    '💀 Elfogyott a {scope} keret ({spent}/{budget}). Ennyiből: {kind}',
+    '🔥 A {scope} keret ég! {spent} – a nagymamád ezt nem hagyná szó nélkül.',
+    '🚨 {scope} keret túllépve: {spent}/{budget}. Fukar bácsi a szívéhez kap.',
+  ],
+  turn: ['💸 Ez a kör +{cost} volt ({kind}). Megérte?'],
+  xp: ['🪙 +{xp} garas a tegnapi fukarkodásért!', '🌾 Jó termés volt tegnap: +{xp} garas.'],
+  tipIntro: ['Hallgass rám, fiam: ', 'Okos gazda így tenne: ', ''],
+  sayings: {
+    calm: [
+      'Így kell ezt, fiam. Garast a garasra!',
+      'Szép csendesen, ahogy a Tisza folyik.',
+      'Aki a tokent nem becsüli, a dollárt nem érdemli.',
+    ],
+    worried: [
+      'Hékás! Fogy a keret, mint nyáron a jég.',
+      'Nem lesz ebből jó, ha így megy tovább...',
+      'Ennyiért már a szomszéd tehenét is megvehetném.',
+    ],
+    angry: [
+      'Az ántivilágban ennyiből egész tanyát vettünk!',
+      'Teringettét! Elfogyott a keret!',
+      'Mán megint az Opus? Hát mi vagyok én, Rotschild?',
+    ],
+  },
+}
+
+const nagymama: Pack = {
+  id: 'nagymama',
+  name: 'Nagymama',
+  description: 'Aggódó szeretet, rántott hús és lelkiismeret-furdalás.',
+  price: 60,
+  warn: [
+    '👵 Kisfiam, a {scope} keret {pct}%-a elment. Ettél már?',
+    '🍲 {pct}%... ennyiből egy hétre főztem volna, csillagom.',
+    '🧶 Ne haragudj, de a {scope} keret már {pct}%-on áll.',
+  ],
+  over: [
+    '😢 Elfogyott a {scope} keret ({spent}). Nem ezért neveltelek.',
+    '🥟 {spent}! Ennyiből {kind}. Gyere haza, főzök inkább.',
+    '📞 Felhívom anyádat. {scope} keret: {spent}/{budget}.',
+  ],
+  turn: ['🍪 +{cost} egy körre? Abból sütöttem volna egy tálca pogácsát.'],
+  xp: ['🍰 +{xp} garas, mert tegnap spóroltál. Büszke vagyok rád, kincsem!'],
+  tipIntro: ['Kisfiam, ', 'Csillagom, egy jó tanács: ', 'Ne haragudj, de '],
+  sayings: {
+    calm: ['Jól van, kincsem, okosan csinálod.', 'Egyél még egy kis rétest!', 'Látod, így kell beosztani.'],
+    worried: ['Kisfiam, nem költesz te túl sokat?', 'Jaj, csak meg ne fázz... meg túl ne költs.', 'Anyád is mindig így kezdte.'],
+    angry: [
+      'Ennyi pénzből fél disznót vettünk volna!',
+      'Ezt még a nagyapád se csinálta, pedig ő ivott!',
+      'Hát erre tanítottalak én?',
+    ],
+  },
+}
+
+const nav: Pack = {
+  id: 'nav',
+  name: 'NAV-ellenőr',
+  description: 'Hivatalos, rideg, iktatószámmal.',
+  price: 120,
+  warn: [
+    '📋 Értesítjük, hogy {scope} keretének {pct}%-a felhasználásra került.',
+    '🗂️ Ügyiratszám: FL/{pct}. A {scope} keret {pct}%-on áll.',
+    '🧾 Felhívjuk figyelmét: {scope} keret {pct}%. Kérjük, tartsa be.',
+  ],
+  over: [
+    '⚖️ Hiánypótlásra felszólítjuk: {scope} keret {spent}/{budget}.',
+    '🏛️ Határozat: {scope} keret túllépve ({spent}). Fellebbezésnek helye nincs.',
+    '📬 Tértivevényes levél: {spent} költés, {budget} keret. Jelentkezzen.',
+  ],
+  turn: ['🧾 Egyedi tétel rögzítve: +{cost}. Bizonylatot kérünk.'],
+  xp: ['📄 Adójóváírás: +{xp} garas. Megőrzési idő: 8 év.'],
+  tipIntro: ['Hatósági javaslat: ', 'Ellenőrzési megállapítás: ', 'Felhívjuk figyelmét: '],
+  sayings: {
+    calm: ['Az ügyfél adatai rendben.', 'Bevallás határidőben beérkezett.', 'Nincs további teendő.'],
+    worried: ['Az ügyet felülvizsgálatra kijelöltük.', 'Kérjük, tartsa kéznél a bizonylatokat.', 'Szúrópróbaszerű ellenőrzés várható.'],
+    angry: ['Mulasztási bírság kiszabva.', 'Az ügyet átadtuk a végrehajtónak.', 'Önellenőrzést javaslunk. Most.'],
+  },
+}
+
+const betyar: Pack = {
+  id: 'betyar',
+  name: 'Betyár',
+  description: 'Rózsa Sándor módra: a gazdagtól (az Opustól) elvesz.',
+  price: 90,
+  warn: [
+    '🐎 Hej, komám! A {scope} keret {pct}%-a már elporzott.',
+    '🔫 Megállj! {scope} keret {pct}%. A pandúrok már szimatolnak.',
+    '🌾 {pct}%... a csárdában már suttognak rólad.',
+  ],
+  over: [
+    '🪢 Elkaptak a pandúrok: {scope} keret {spent}/{budget}!',
+    '🏴 A {scope} keret odavan ({spent}). Futás a nádasba!',
+    '⛓️ {spent}! Ennyit még Sobri Jóska se rabolt egy éjjel.',
+  ],
+  turn: ['🐴 +{cost} egy körért? Ennyiért lovat lopok, nem tokent!'],
+  xp: ['💰 +{xp} garas zsákmány a tegnapi portyáról!'],
+  tipIntro: ['Hallod-e, komám: ', 'Betyárbecsületre: ', 'Súgom, mint betyár a betyárnak: '],
+  sayings: {
+    calm: ['Szabad a puszta, tele a tarisznya.', 'Gazdagtól veszek, szegénynek adok.', 'Ma nem kell bujdosni.'],
+    worried: ['Hallom a pandúrok lovát...', 'Kevés már a tallér a tarisznyában.', 'Ideje lesz a nádasba húzódni.'],
+    angry: ['Nem rabolok én, csak az Opus vesz el mindent!', 'A betyárbecsületre, ez sok!', 'Ennyit a vármegye se szed!'],
+  },
+}
+
+const kocsmai: Pack = {
+  id: 'kocsmai',
+  name: 'Kocsmai',
+  description: 'Pultnál támasztott bölcsességek, fröccsben mérve.',
+  price: 60,
+  warn: [
+    '🍺 Komám, a {scope} keret {pct}%-a már lecsúszott.',
+    '🍷 {pct}%? Ez már a harmadik fröccs után is sok.',
+    '🎯 Csapos! A {scope} keret {pct}%-on áll, írd fel.',
+  ],
+  over: [
+    '🍻 Elfogyott a {scope} keret! {spent}-ból egy hétig fizettem volna a kört.',
+    '🥴 {spent}/{budget}... Zárás van, komám, nincs több hitel.',
+    '🍺 Ennyiből {kind}. És te tokenre költötted.',
+  ],
+  turn: ['🍺 +{cost} egy körért? Ennyiért az egész kocsmának fizetek egyet!'],
+  xp: ['🍻 +{xp} garas! Tegnap józanul költöttél, egészségedre!'],
+  tipIntro: ['Figyu, komám: ', 'Mondom én a pultnál: ', 'Igyunk rá, de előbb: '],
+  sayings: {
+    calm: ['Egy kis fröccs, egy kis kód, így szép az élet.', 'Jó a hangulat, olcsó a kör.', 'Ma még én fizetek.'],
+    worried: ['Komám, kezd nőni a cetli a pult alatt...', 'Lassan a kocsmáros is ránk néz.', 'Még egy kör, aztán haza.'],
+    angry: ['Kitiltottak a kocsmából, akkora a cetli!', 'Ennyiért már a kocsmát is megvettem volna!', 'Zárórát mondok, komám!'],
+  },
+}
+
+/** Each mode's message packs, its free default first. */
+export const PACKS_BY_MODE: Readonly<Record<Mode, readonly Pack[]>> = {
+  frugalitas: [miser, grandma, bartender, buccaneer, auditor],
+  fukarlec: [paraszt, nagymama, betyar, kocsmai, nav],
+}
+
+export const PACKS: readonly Pack[] = [...PACKS_BY_MODE.frugalitas, ...PACKS_BY_MODE.fukarlec]
+
+/** The message packs of the current mode. */
+export const modePacks = (): readonly Pack[] => PACKS_BY_MODE[mode()]
+
+export const packById = (id: string | undefined): Pack => modePacks().find(p => p.id === id) ?? modePacks()[0]!
 
 /** Fill `{name}` placeholders; an unknown name is left as written. */
 export function fill(template: string, values: Readonly<Record<string, string | number>>): string {
@@ -170,7 +323,7 @@ export function voice(tip: string, pack: Pack, seed: number): string {
   if (!match) return intro + tip
   const [, emoji, text] = match
   const firstWord = text!.split(/\s/, 1)[0]!
-  const isName = /^(Opus|Sonnet|Haiku|Claude|LiteLLM|I|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)/.test(firstWord)
-  const lowered = !isName && /^[A-Z]([a-z]|\s)/.test(text!) ? text!.charAt(0).toLowerCase() + text!.slice(1) : text!
+  const isName = /^(Opus|Sonnet|Haiku|Claude|LiteLLM|NAV|I|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)/.test(firstWord)
+  const lowered = !isName && /^[A-ZÁÉÍÓÖŐÚÜŰ]([a-záéíóöőúüű]|\s)/.test(text!) ? text!.charAt(0).toLowerCase() + text!.slice(1) : text!
   return `${emoji} ${intro}${lowered}`
 }

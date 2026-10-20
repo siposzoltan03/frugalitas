@@ -1,6 +1,7 @@
 import { QUEST_XP, questFor } from './advice'
 import { addDays } from './format'
 import type { Day } from './litellm'
+import { cmd, mode, tr } from './mode'
 
 // XP ("coins") for thrift: every closed UTC day with spend that stayed within the
 // daily budget earns coins, read off LiteLLM's own daily numbers. A credited day is
@@ -18,8 +19,11 @@ export type Ledger = {
   spent: number
   /** What was bought: `skin:<id>` and `pack:<id>`. */
   owned: string[]
+  /** What Frugalitas mode wears. */
   skin: string
   pack: string
+  /** What Fukarléc mode wears, so switching modes back and forth keeps each mode's choice. */
+  fukarlec: { skin: string; pack: string }
   /** Not `at`: the store's pruning drops values whose `at` is old. */
   updatedAt: number
 }
@@ -33,7 +37,7 @@ export const XP_STREAK_CAP = 5
 const WELCOME_DAYS = 7
 
 export function newLedger(today: string, now: number): Ledger {
-  return { since: addDays(today, -WELCOME_DAYS), days: {}, quests: {}, spent: 0, owned: [], skin: 'miser', pack: 'miser', updatedAt: now }
+  return { since: addDays(today, -WELCOME_DAYS), days: {}, quests: {}, spent: 0, owned: [], skin: 'miser', pack: 'miser', fukarlec: { skin: 'paraszt', pack: 'paraszt' }, updatedAt: now }
 }
 
 /** Reads back whatever the store held, filling what an older version did not write. */
@@ -47,8 +51,12 @@ export function asLedger(value: unknown, today: string, now: number): Ledger {
     quests: v.quests && typeof v.quests === 'object' ? { ...v.quests } : {},
     spent: typeof v.spent === 'number' ? v.spent : 0,
     owned: Array.isArray(v.owned) ? [...v.owned] : [],
-    skin: typeof v.skin === 'string' ? v.skin : 'miser',
-    pack: typeof v.pack === 'string' ? v.pack : 'miser',
+    skin: typeof v.skin === 'string' ? v.skin : fresh.skin,
+    pack: typeof v.pack === 'string' ? v.pack : fresh.pack,
+    fukarlec: {
+      skin: typeof v.fukarlec?.skin === 'string' ? v.fukarlec.skin : fresh.fukarlec.skin,
+      pack: typeof v.fukarlec?.pack === 'string' ? v.fukarlec.pack : fresh.fukarlec.pack,
+    },
     updatedAt: now,
   }
 }
@@ -116,12 +124,60 @@ export function balance(ledger: Ledger): number {
 }
 
 export const RANKS: readonly { name: string; at: number; emoji: string }[] = [
-  { name: 'Apprentice Saver', at: 0, emoji: '🪙' },
-  { name: 'Penny Pincher', at: 50, emoji: '🐷' },
-  { name: 'Bean Counter', at: 150, emoji: '🧮' },
-  { name: 'Treasurer', at: 350, emoji: '💼' },
-  { name: 'Tycoon', at: 700, emoji: '🎩' },
-  { name: 'Grand Miser', at: 1200, emoji: '🏰' },
+  {
+    get name() {
+      return tr('Apprentice Saver', 'Napszámos')
+    },
+    at: 0,
+    get emoji() {
+      return tr('🪙', '🧺')
+    },
+  },
+  {
+    get name() {
+      return tr('Penny Pincher', 'Zsellér')
+    },
+    at: 50,
+    get emoji() {
+      return tr('🐷', '🌱')
+    },
+  },
+  {
+    get name() {
+      return tr('Bean Counter', 'Béres')
+    },
+    at: 150,
+    get emoji() {
+      return tr('🧮', '🐂')
+    },
+  },
+  {
+    get name() {
+      return tr('Treasurer', 'Gazda')
+    },
+    at: 350,
+    get emoji() {
+      return tr('💼', '🌾')
+    },
+  },
+  {
+    get name() {
+      return tr('Tycoon', 'Nagygazda')
+    },
+    at: 700,
+    get emoji() {
+      return tr('🎩', '🏡')
+    },
+  },
+  {
+    get name() {
+      return tr('Grand Miser', 'Fukar földesúr')
+    },
+    at: 1200,
+    get emoji() {
+      return '🏰'
+    },
+  },
 ]
 
 export function rankOf(totalEarned: number): {
@@ -144,21 +200,27 @@ export function owns(ledger: Ledger, item: ShopItem): boolean {
   return item.price === 0 || ledger.owned.includes(`${item.kind}:${item.id}`)
 }
 
-const wearCommand = (item: ShopItem) => `/frugal ${item.kind} ${item.id}`
+const wearCommand = (item: ShopItem) => `${cmd()} ${item.kind} ${item.id}`
 
 /** Spends coins on `item` and puts it on; never charges for what you already own. */
 export function buy(ledger: Ledger, item: ShopItem): { ledger: Ledger } | { error: string } {
-  if (owns(ledger, item)) return { error: `You already own ${item.name}. To wear it: ${wearCommand(item)}` }
+  if (owns(ledger, item)) return { error: tr(`You already own ${item.name}. To wear it: ${wearCommand(item)}`, `${item.name} már a tiéd. Felvenni: ${wearCommand(item)}`) }
   const have = balance(ledger)
-  if (have < item.price) return { error: `That's ${item.price} coins and you have ${have}. ${item.price - have} more to go.` }
+  if (have < item.price) return { error: tr(`That's ${item.price} coins and you have ${have}. ${item.price - have} more to go.`, `Ez ${item.price} garas, neked ${have} van. Még ${item.price - have} kell.`) }
   const next: Ledger = { ...ledger, owned: [...ledger.owned, `${item.kind}:${item.id}`], spent: ledger.spent + item.price }
   return wear(next, item)
 }
 
 /** Puts on an owned `item`; spends nothing. */
 export function wear(ledger: Ledger, item: ShopItem): { ledger: Ledger } | { error: string } {
-  if (!owns(ledger, item)) return { error: `You don't own ${item.name} yet, it's ${item.price} coins: /frugal buy ${item.id}` }
+  if (!owns(ledger, item)) return { error: tr(`You don't own ${item.name} yet, it's ${item.price} coins: ${cmd()} buy ${item.id}`, `${item.name} még nincs meg, ${item.price} garas: ${cmd()} buy ${item.id}`) }
+  if (mode() === 'fukarlec') return { ledger: { ...ledger, fukarlec: { ...ledger.fukarlec, [item.kind]: item.id } } }
   return { ledger: item.kind === 'skin' ? { ...ledger, skin: item.id } : { ...ledger, pack: item.id } }
+}
+
+/** What the current mode wears. */
+export function worn(ledger: Ledger): { skin: string; pack: string } {
+  return mode() === 'fukarlec' ? ledger.fukarlec : { skin: ledger.skin, pack: ledger.pack }
 }
 
 /** `▰▰▰▱▱▱` progress text. */

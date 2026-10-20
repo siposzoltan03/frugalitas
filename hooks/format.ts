@@ -1,3 +1,4 @@
+import { mode, tr } from './mode'
 import { addMetrics, emptyMetrics } from './litellm'
 import type { Activity, Day, Metrics } from './litellm'
 
@@ -7,7 +8,15 @@ export type Spend = { session: number; today: number; month: number }
 
 export type Scope = keyof Budgets
 
-export const SCOPE_NAMES: Record<Scope, string> = { session: 'session', daily: 'daily', monthly: 'monthly' }
+export const SCOPE_NAMES: Record<Scope, string> = {
+  session: 'session',
+  get daily() {
+    return tr('daily', 'napi')
+  },
+  get monthly() {
+    return tr('monthly', 'havi')
+  },
+}
 
 export function money(usd: number): string {
   if (usd >= 100) return `$${Math.round(usd)}`
@@ -53,18 +62,18 @@ const part = (label: string, spent: number, budget: number) =>
 
 export function statusLine(spend: Spend, budgets: Budgets, fun: boolean, stale: boolean): string {
   const w = worst(spend, budgets)
-  const head = fun ? `🪙 ${w ? mood(w.ratio) : '😇'}` : 'frugal'
+  const head = fun ? `🪙 ${w ? mood(w.ratio) : '😇'}` : tr('frugal', 'fukarléc')
   const parts = [
     part('session', spend.session, budgets.session),
-    part('today', spend.today, budgets.daily),
-    part('month', spend.month, budgets.monthly),
+    part(tr('today', 'ma'), spend.today, budgets.daily),
+    part(tr('month', 'hó'), spend.month, budgets.monthly),
   ]
-  return `${head} ${parts.join(' · ')}${stale ? ' ⚠︎ stale' : ''}`
+  return tr(`${head} ${parts.join(' · ')}${stale ? ' ⚠︎ stale' : ''}`, `${head} ${parts.join(' · ')}${stale ? ' ⚠︎ régi adat' : ''}`)
 }
 
 // --- What the money would have bought ----------------------------------------
 
-const THINGS: { name: string; plural: string; usd: number; emoji: string }[] = [
+const THINGS_USD: { name: string; plural: string; usd: number; emoji: string }[] = [
   { name: 'gumball', plural: 'gumballs', usd: 0.25, emoji: '🍬' },
   { name: 'coffee', plural: 'coffees', usd: 4, emoji: '☕' },
   { name: 'pizza', plural: 'pizzas', usd: 15, emoji: '🍕' },
@@ -74,11 +83,28 @@ const THINGS: { name: string; plural: string; usd: number; emoji: string }[] = [
   { name: 'used car', plural: 'used cars', usd: 8000, emoji: '🚗' },
 ]
 
-/** "≈ 3 coffees ☕": the dearest thing the amount still buys at least one of. */
-export function inKind(usd: number): string {
-  const thing = [...THINGS].reverse().find(t => usd >= t.usd) ?? THINGS[0]!
-  const count = usd / thing.usd
-  const shown = count >= 10 ? String(Math.round(count)) : count >= 1 ? count.toFixed(1).replace(/\.0$/, '') : count.toFixed(2)
+const THINGS_HUF: { name: string; huf: number; emoji: string }[] = [
+  { name: 'Túró Rudi', huf: 250, emoji: '🍫' },
+  { name: 'BKK-jegy', huf: 500, emoji: '🚋' },
+  { name: 'korsó sör', huf: 1100, emoji: '🍺' },
+  { name: 'lángos', huf: 1400, emoji: '🫓' },
+  { name: 'kürtőskalács', huf: 2500, emoji: '🥐' },
+  { name: 'havi BKK-bérlet', huf: 8950, emoji: '🎫' },
+  { name: 'Balaton-parti hétvége', huf: 150_000, emoji: '🏖️' },
+  { name: 'használt Suzuki Swift', huf: 2_000_000, emoji: '🚗' },
+]
+
+/** "≈ 3 coffees ☕" (or "≈ 3 lángos 🫓" in Fukarléc mode): the dearest thing the amount still buys at least one of. */
+export function inKind(usd: number, hufRate = 350): string {
+  const shownCount = (count: number) =>
+    count >= 10 ? String(Math.round(count)) : count >= 1 ? count.toFixed(1).replace(/\.0$/, '') : count.toFixed(2)
+  if (mode() === 'fukarlec') {
+    const huf = usd * hufRate
+    const thing = [...THINGS_HUF].reverse().find(t => huf >= t.huf) ?? THINGS_HUF[0]!
+    return `≈ ${shownCount(huf / thing.huf)} ${thing.name} ${thing.emoji}`
+  }
+  const thing = [...THINGS_USD].reverse().find(t => usd >= t.usd) ?? THINGS_USD[0]!
+  const shown = shownCount(usd / thing.usd)
   return `≈ ${shown} ${shown === '1' ? thing.name : thing.plural} ${thing.emoji}`
 }
 
@@ -95,21 +121,21 @@ const shortModel = (name: string) => name.replace(/^.*\//, '')
 export function tips(today: Day | undefined, turnCacheWrite: number): string[] {
   const out: string[] = []
   if (turnCacheWrite > 150_000) {
-    out.push(`♻️ ${Math.round(turnCacheWrite / 1000)}k tokens of cache rewritten. /compact, and don't switch models mid-session.`)
+    out.push(tr(`♻️ ${Math.round(turnCacheWrite / 1000)}k tokens of cache rewritten. /compact, and don't switch models mid-session.`, `♻️ ${Math.round(turnCacheWrite / 1000)}k cache újraírva. /compact + ne válts modellt.`))
   }
   if (!today) return out
   const m = today.metrics
   const input = m.promptTokens
   if (input > 2_000_000 && m.cacheRead / input < 0.6) {
-    out.push(`🧊 Cache hit today is ${Math.round((m.cacheRead / input) * 100)}%. /clear and model switches hurt it.`)
+    out.push(tr(`🧊 Cache hit today is ${Math.round((m.cacheRead / input) * 100)}%. /clear and model switches hurt it.`, `🧊 Cache hit ma ${Math.round((m.cacheRead / input) * 100)}%. /clear és modellváltás rontja.`))
   }
   const models = Object.entries(today.models).filter(([, mm]) => mm.spend > 0.5)
   const opus = models.find(([n]) => /opus/i.test(n))
   const cheaper = models.find(([n]) => /sonnet/i.test(n)) ?? models.find(([n]) => /haiku/i.test(n))
   if (opus && m.spend > 0 && opus[1].spend / m.spend > 0.8) {
     const ratio = cheaper && perMTok(cheaper[1]) > 0 ? perMTok(opus[1]) / perMTok(cheaper[1]) : 0
-    const ratioText = ratio > 1.2 ? ` (${ratio.toFixed(1)}x dearer per token)` : ''
-    out.push(`🧠 Today ${Math.round((opus[1].spend / m.spend) * 100)}% Opus${ratioText}. For routine work: /model sonnet.`)
+    const ratioText = ratio > 1.2 ? tr(` (${ratio.toFixed(1)}x dearer per token)`, ` (${ratio.toFixed(1)}x drágább)`) : ''
+    out.push(tr(`🧠 Today ${Math.round((opus[1].spend / m.spend) * 100)}% Opus${ratioText}. For routine work: /model sonnet.`, `🧠 Ma ${Math.round((opus[1].spend / m.spend) * 100)}% Opus${ratioText}. Rutinra /model sonnet.`))
   }
   return out
 }
@@ -145,9 +171,10 @@ export function report(opts: {
   budgets: Budgets
   todayDate: string
   fun: boolean
+  hufRate: number
   streakDays: number
 }): string {
-  const { activity, budgets, fun } = opts
+  const { activity, budgets, fun, hufRate } = opts
   const lines: string[] = [opts.title, '']
 
   const max = Math.max(0, ...activity.days.map(d => d.metrics.spend))
@@ -157,7 +184,7 @@ export function report(opts: {
       `${d.date}  ${lpad(money(d.metrics.spend), 7)}  ${bar(d.metrics.spend, max)}${over ? (fun ? ' 🔥' : ' !') : ''}`,
     )
   }
-  if (activity.days.length === 0) lines.push('(no spend in this period)')
+  if (activity.days.length === 0) lines.push(tr('(no spend in this period)', '(nincs költés ebben az időszakban)'))
 
   const models = new Map<string, Metrics>()
   for (const d of activity.days) {
@@ -165,27 +192,27 @@ export function report(opts: {
   }
   const total = activity.total
   if (models.size > 0) {
-    lines.push('', 'By model:')
+    lines.push('', tr('By model:', 'Modellenként:'))
     for (const [name, m] of [...models].sort((a, b) => b[1].spend - a[1].spend)) {
       const share = total.spend > 0 ? Math.round((m.spend / total.spend) * 100) : 0
       lines.push(
-        `  ${pad(shortModel(name), 22)} ${lpad(money(m.spend), 7)}  ${lpad(String(share), 3)}%  ${lpad(perMTok(m).toFixed(2), 6)} $/MTok  ${m.requests} requests`,
+        tr(`  ${pad(shortModel(name), 22)} ${lpad(money(m.spend), 7)}  ${lpad(String(share), 3)}%  ${lpad(perMTok(m).toFixed(2), 6)} $/MTok  ${m.requests} requests`, `  ${pad(shortModel(name), 22)} ${lpad(money(m.spend), 7)}  ${lpad(String(share), 3)}%  ${lpad(perMTok(m).toFixed(2), 6)} $/MTok  ${m.requests} kérés`),
       )
     }
   }
 
-  lines.push('', `Total: ${money(total.spend)} · ${total.requests} requests`)
+  lines.push('', tr(`Total: ${money(total.spend)} · ${total.requests} requests`, `Összesen: ${money(total.spend)} · ${total.requests} kérés`))
   if (total.promptTokens > 0) {
     lines.push(
-      `Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% hit, ${money(total.cacheSaved)} saved${fun ? ' 🦸' : ''}`,
+      tr(`Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% hit, ${money(total.cacheSaved)} saved${fun ? ' 🦸' : ''}`, `Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% találat, ${money(total.cacheSaved)} megtakarítás${fun ? ' 🦸' : ''}`),
     )
   }
   lines.push(
-    `Now: ${statusLine(opts.spend, budgets, fun, false)}`,
+    tr(`Now: ${statusLine(opts.spend, budgets, fun, false)}`, `Most: ${statusLine(opts.spend, budgets, fun, false)}`),
   )
   if (fun) {
-    lines.push(`That would have bought: ${inKind(total.spend)}`)
-    if (opts.streakDays >= 2) lines.push(`🏆 ${opts.streakDays} days in a row within the daily budget. Old Penny is proud!`)
+    lines.push(tr(`That would have bought: ${inKind(total.spend, hufRate)}`, `Ennyiből: ${inKind(total.spend, hufRate)}`))
+    if (opts.streakDays >= 2) lines.push(tr(`🏆 ${opts.streakDays} days in a row within the daily budget. Old Penny is proud!`, `🏆 ${opts.streakDays} napja a napi kereten belül vagy – Fukar bácsi büszke!`))
   }
   return lines.join('\n')
 }

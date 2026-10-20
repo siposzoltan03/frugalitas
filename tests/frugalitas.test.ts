@@ -6,7 +6,8 @@ import { fetchActivity, makeConn, parseCustomHeaders, priceFor } from '../hooks/
 import { MASCOT_COLUMNS, MASCOT_PIXEL_ROWS, MASCOT_ROWS, mascotMood, mascotPixels, mascotRasterCells } from '../hooks/mascot'
 import { fill, PACKS, packById, voice } from '../hooks/packs'
 import { SKINS, skinById } from '../hooks/skins'
-import { balance, buy, credit, creditFrom, dayXp, newLedger, rankOf, wear } from '../hooks/xp'
+import { balance, buy, credit, creditFrom, dayXp, newLedger, rankOf, wear, worn } from '../hooks/xp'
+import { setMode } from '../hooks/mode'
 import type { ShopItem } from '../hooks/xp'
 import type { Day, Prices } from '../hooks/litellm'
 import {
@@ -234,6 +235,55 @@ describe('in a session', () => {
     mock.env(on, {})
     await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
     expect((await $.command.run(COMMAND(''))).text).toContain('not running through a LiteLLM')
+  })
+})
+
+describe('modes', () => {
+  test('/frugal mode switches the language and /fukarlec is the same command', async ($, on) => {
+    engine(on)
+    mock.clock(on, { now: NOW })
+    mock.store(on)
+    mock.env(on, {})
+    await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+    try {
+      expect((await $.command.run(COMMAND('mode fukarlec'))).text).toContain('Fukarléc mód')
+      expect((await $.command.run({ command: 'fukarlec', args: '' })).text).toContain('nem LiteLLM proxyn')
+      expect((await $.command.run({ command: 'fukarlec', args: 'mode frugalitas' })).text).toContain('Frugalitas mode')
+      expect((await $.command.run(COMMAND(''))).text).toContain('not running through a LiteLLM')
+    } finally {
+      setMode('frugalitas')
+    }
+  })
+
+  test('a new session starts in the mode switched to last', async ($, on) => {
+    engine(on)
+    mock.clock(on, { now: NOW })
+    mock.store(on, { mode: { mode: 'fukarlec', updatedAt: NOW } })
+    mock.env(on, {})
+    await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true })
+    // The engine loads its own copy of the plugin, so its mode shows in what it says.
+    expect((await $.command.run(COMMAND(''))).text).toContain('nem LiteLLM proxyn')
+  })
+
+  test('each mode has its own shop and keeps its own outfit; coins are shared', async () => {
+    const ledger = { ...newLedger('2026-10-15', 0), days: { '2026-10-10': 400 } }
+    const item = (kind: 'skin' | 'pack', id: string, price: number): ShopItem => ({ kind, id, name: id, description: '', price })
+    setMode('fukarlec')
+    try {
+    const hu = buy(ledger, item('skin', 'csikos', 150))
+    if (!('ledger' in hu)) throw new Error(hu.error)
+    expect(worn(hu.ledger).skin).toBe('csikos')
+    expect(skinById(worn(hu.ledger).skin).id).toBe('csikos')
+    setMode('frugalitas')
+    expect(worn(hu.ledger).skin).toBe('miser')
+    expect(balance(hu.ledger)).toBe(250)
+    expect(skinById('csikos').id).toBe('miser')
+    expect(inKind(8)).toContain('coffees')
+    setMode('fukarlec')
+    expect(inKind(4, 350)).toContain('lángos')
+    } finally {
+      setMode('frugalitas')
+    }
   })
 })
 

@@ -11,6 +11,7 @@ import {
   cacheTtlMs,
   cacheCountdownDone,
   cacheWarmSince,
+  canonicalArgs,
   clearOrRewriteTip,
   clock,
   contextLine,
@@ -64,11 +65,12 @@ import {
 } from './format'
 import type { Budgets, Scope, Spend } from './format'
 import type { AdviceView, SnapshotState, TurnCost, XpView } from '../types'
+import { asMode, cmd, MODES, mode, setMode, tr } from './mode'
 import { MASCOT_COLUMNS, MASCOT_ROWS, mascotMood, mascotRasterCells } from './mascot'
-import { fill, packById, PACKS, pickLine, voice } from './packs'
+import { fill, modePacks, packById, pickLine, voice } from './packs'
 import type { Pack } from './packs'
-import { skinById, SKINS } from './skins'
-import { asLedger, balance, buy, credit, creditFrom, earned, owns, progressBar, rankOf, wear } from './xp'
+import { modeSkins, skinById } from './skins'
+import { asLedger, balance, buy, credit, creditFrom, earned, owns, progressBar, rankOf, wear, worn } from './xp'
 import type { Ledger, ShopItem } from './xp'
 
 const POLL_MS = 5 * 60_000
@@ -111,12 +113,16 @@ const adviceAtom = atom({ plugin: 'frugalitas', key: 'advice' } as const, null a
 
 const XP_KEY = 'xp'
 
-const SHOP: readonly ShopItem[] = [
-  ...SKINS.map(s => ({ kind: 'skin' as const, id: s.id, name: s.name, description: s.description, price: s.price })),
-  ...PACKS.map(p => ({ kind: 'pack' as const, id: p.id, name: p.name, description: p.description, price: p.price })),
+/** The current mode's shop: its own skins and message packs. */
+const shop = (): readonly ShopItem[] => [
+  ...modeSkins().map(s => ({ kind: 'skin' as const, id: s.id, name: s.name, description: s.description, price: s.price })),
+  ...modePacks().map(p => ({ kind: 'pack' as const, id: p.id, name: p.name, description: p.description, price: p.price })),
 ]
 
-const xpView = (l: Ledger): XpView => ({ skin: l.skin, pack: l.pack, earned: earned(l), balance: balance(l) })
+/** The mode kept across sessions, set with `/frugal mode`. */
+const MODE_KEY = 'mode'
+
+const xpView = (l: Ledger): XpView => ({ ...worn(l), earned: earned(l), balance: balance(l) })
 
 export const register: Register = (on, options) => {
   const budgets: Budgets = {
@@ -126,6 +132,7 @@ export const register: Register = (on, options) => {
   }
   const isBlocking = options.overBudget === 'block'
   const isFun = options.fun !== false
+  const hufRate = Number(options.hufRate ?? 350)
   const expensiveTurn = Number(options.expensiveTurn ?? 0)
 
   let io: Io | undefined
@@ -169,7 +176,7 @@ export const register: Register = (on, options) => {
   const readCounts = new Map<string, number>()
   const toldTips = new Set<string>()
 
-  const pack = (): Pack => packById(ledger?.pack)
+  const pack = (): Pack => packById(ledger && worn(ledger).pack)
   const say = (lines: readonly string[], vars: Readonly<Record<string, string | number>>, seed: number) =>
     fill(pickLine(lines, seed), vars)
 
@@ -177,7 +184,7 @@ export const register: Register = (on, options) => {
   const background = (work: Promise<unknown>) =>
     void work.catch(err => {
       try {
-        io?.debug(`frugalitas: ${err instanceof Error ? err.message : String(err)}`)
+        io?.debug(tr(`frugalitas: ${err instanceof Error ? err.message : String(err)}`, `fukarlec: ${err instanceof Error ? err.message : String(err)}`))
       } catch {}
     })
 
@@ -252,7 +259,7 @@ export const register: Register = (on, options) => {
         await checkBudgets($io, snap)
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err)
-        $io.debug(`frugalitas: ${lastError}`)
+        $io.debug(tr(`frugalitas: ${lastError}`, `fukarlec: ${lastError}`))
       } finally {
         inflight = undefined
         showStatus($io)
@@ -280,7 +287,7 @@ export const register: Register = (on, options) => {
       await $io.set(key, { at: s.at, level })
       if (level === 1) {
         const vars = { scope: SCOPE_NAMES[scope], pct: Math.round(ratio * 100) }
-        $io.toast(isFun ? say(pack().warn, vars, s.at) : `frugal: ${vars.scope} budget at ${vars.pct}%`, 8000)
+        $io.toast(isFun ? say(pack().warn, vars, s.at) : tr(`frugal: ${vars.scope} budget at ${vars.pct}%`, `fukarléc: ${vars.scope} keret ${vars.pct}%`), 8000)
       } else {
         const text = isFun
           ? say(
@@ -289,14 +296,14 @@ export const register: Register = (on, options) => {
                 scope: SCOPE_NAMES[scope],
                 spent: money(spentBy[scope]),
                 budget: money(budgets[scope]),
-                kind: inKind(spentBy[scope]),
+                kind: inKind(spentBy[scope], hufRate),
               },
               s.at,
             )
-          : `frugal: ${SCOPE_NAMES[scope]} budget exceeded (${money(spentBy[scope])}/${money(budgets[scope])})`
+          : tr(`frugal: ${SCOPE_NAMES[scope]} budget exceeded (${money(spentBy[scope])}/${money(budgets[scope])})`, `fukarléc: ${SCOPE_NAMES[scope]} keret túllépve (${money(spentBy[scope])}/${money(budgets[scope])})`)
         $io.toast(text, 12_000)
         $io.notify(text)
-        if (isBlocking) $io.toast('🔒 New prompts are blocked until /frugal allow.', 12_000)
+        if (isBlocking) $io.toast(tr('🔒 New prompts are blocked until /frugal allow.', '🔒 Új prompt csak /fukarlec allow után.'), 12_000)
       }
     }
   }
@@ -306,29 +313,29 @@ export const register: Register = (on, options) => {
     // Before today's first request (every day after 00:00 UTC) read the last active day instead.
     const day = today ?? activity.days.filter(d => d.metrics.spend > 0).at(-1)
     if (day) {
-      const when = today ? 'Today' : 'Last active day'
+      const when = today ? tr('Today', 'Ma') : tr('Last active day', 'Legutóbb')
       const m = day.metrics
       const dayModels = Object.entries(day.models).filter(([, mm]) => mm.spend > 0.1)
       const opus = dayModels.find(([n]) => /opus/i.test(n))
       if (opus && m.spend > 0 && opus[1].spend / m.spend > 0.7) {
         const pct = Math.round((opus[1].spend / m.spend) * 100)
-        return `🧠 ${when}: ${pct}% Opus. For routine work /model sonnet is cheaper.`
+        return tr(`🧠 ${when}: ${pct}% Opus. For routine work /model sonnet is cheaper.`, `🧠 ${when} ${pct}% Opus. Rutinmunkára /model sonnet olcsóbb.`)
       }
       const input = m.promptTokens
       if (input > 500_000 && m.cacheRead / input < 0.7) {
-        return `🧊 ${when}: cache hit ${Math.round((m.cacheRead / input) * 100)}%. Model switches and /clear hurt it.`
+        return tr(`🧊 ${when}: cache hit ${Math.round((m.cacheRead / input) * 100)}%. Model switches and /clear hurt it.`, `🧊 ${when} a cache hit ${Math.round((m.cacheRead / input) * 100)}%. Modellváltás és /clear rontja.`)
       }
       if (m.completionTokens > 0 && m.promptTokens / m.completionTokens > 15) {
-        return '📐 Long context, little output — /compact cuts the prompt tokens.'
+        return tr('📐 Long context, little output — /compact cuts the prompt tokens.', '📐 Hosszú context, kevés output — /compact csökkenti a prompt tokent.')
       }
       if (dayModels.length > 3) {
-        return `🔀 ${when}: ${dayModels.length} models used. Every model switch invalidates the cache.`
+        return tr(`🔀 ${when}: ${dayModels.length} models used. Every model switch invalidates the cache.`, `🔀 ${when} ${dayModels.length} modellt használtál. Modellváltás cache-t invalidál.`)
       }
     }
     if (t.cacheSaved > 0) {
-      return `🦸 The cache has saved ${money(t.cacheSaved)} so far — ${Math.round(t.cacheSaved / (t.spend + t.cacheSaved) * 100)}% off.`
+      return tr(`🦸 The cache has saved ${money(t.cacheSaved)} so far — ${Math.round(t.cacheSaved / (t.spend + t.cacheSaved) * 100)}% off.`, `🦸 A cache eddig ${money(t.cacheSaved)}-t spórolt — ${Math.round(t.cacheSaved / (t.spend + t.cacheSaved) * 100)}% megtakarítás.`)
     }
-    return '💡 /compact mid-session: a smaller context means fewer tokens per turn.'
+    return tr('💡 /compact mid-session: a smaller context means fewer tokens per turn.', '💡 /compact a session közepén: kisebb context = kevesebb token/kör.')
   }
 
   function xpText(l: Ledger): string {
@@ -336,39 +343,39 @@ export const register: Register = (on, options) => {
     const r = rankOf(total)
     const recent = Object.entries(l.days).sort(([a], [b]) => b.localeCompare(a)).slice(0, 7)
     return [
-      `${r.emoji} ${r.name} · ${total} coins earned · ${balance(l)} in your pocket`,
-      r.next ? `${progressBar(r.progress)} → ${r.next.name} (${r.next.at})` : `${progressBar(1)} top rank!`,
-      `Skin: ${skinById(l.skin).name} · Pack: ${packById(l.pack).name}`,
+      tr(`${r.emoji} ${r.name} · ${total} coins earned · ${balance(l)} in your pocket`, `${r.emoji} ${r.name} · ${total} garas szerezve · ${balance(l)} a zsebben`),
+      r.next ? `${progressBar(r.progress)} → ${r.next.name} (${r.next.at})` : tr(`${progressBar(1)} top rank!`, `${progressBar(1)} a legmagasabb rang!`),
+      `Skin: ${skinById(worn(l).skin).name} · Pack: ${packById(worn(l).pack).name}`,
       '',
       recent.length > 0
-        ? `Recent days: ${recent
+        ? `${tr('Recent days', 'Utolsó napok')}: ${recent
             .map(([d, xp]) => `${d.slice(5)} ${xp > 0 ? `+${xp + (l.quests[d] ?? 0)}${l.quests[d] ? '🎯' : ''}` : '0 🔥'}`)
             .join(' · ')}`
-        : 'No credited days yet: coins are paid for closed (UTC) days.',
-      `Rule: an active day within the daily budget (${money(budgets.daily)}) = 10 + up to 10 for thrift + streak bonus (up to +10);`,
-      `a completed daily quest +${QUEST_XP}.`,
+        : tr('No credited days yet: coins are paid for closed (UTC) days.', 'Még nincs jóváírt nap: a lezárt (UTC) napokért jár garas.'),
+      tr(`Rule: an active day within the daily budget (${money(budgets.daily)}) = 10 + up to 10 for thrift + streak bonus (up to +10);`, `Szabály: napi keret (${money(budgets.daily)}) alatti aktív nap = 10 + max 10 a spórolásért + sorozat-bónusz (max +10),`),
+      tr(`a completed daily quest +${QUEST_XP}.`, `a teljesített napi küldetés +${QUEST_XP}.`),
       ...(snap ? [questLine(snap) ?? ''] : []),
     ].join('\n')
   }
 
   function shopText(l: Ledger): string {
     const line = (i: ShopItem) => {
-      const worn = i.kind === 'skin' ? l.skin === i.id : l.pack === i.id
-      const mark = worn ? '👉' : owns(l, i) ? '✅' : '🔒'
-      const price = i.price === 0 ? 'free' : `${i.price} coins`
-      return `  ${mark} ${i.id.padEnd(11)} ${i.name.padEnd(16)} ${price.padStart(10)}  ${i.description}`
+      const wearing = i.kind === 'skin' ? worn(l).skin === i.id : worn(l).pack === i.id
+      const mark = wearing ? '👉' : owns(l, i) ? '✅' : '🔒'
+      const price = i.price === 0 ? tr('free', 'ingyen') : tr(`${i.price} coins`, `${i.price} garas`)
+      return tr(`  ${mark} ${i.id.padEnd(11)} ${i.name.padEnd(16)} ${price.padStart(10)}  ${i.description}`, `  ${mark} ${i.id.padEnd(9)} ${i.name.padEnd(16)} ${price.padStart(10)}  ${i.description}`)
     }
     return [
-      `🛒 Old Penny's shop · in your pocket: ${balance(l)} coins`,
+      tr(`🛒 Old Penny's shop · in your pocket: ${balance(l)} coins`, `🛒 Fukar bácsi boltja · zsebben: ${balance(l)} garas`),
       '',
-      'Skins:',
-      ...SHOP.filter(i => i.kind === 'skin').map(line),
+      tr('Skins:', 'Skinek:'),
+      ...shop().filter(i => i.kind === 'skin').map(line),
       '',
-      'Message packs:',
-      ...SHOP.filter(i => i.kind === 'pack').map(line),
+      tr('Message packs:', 'Üzenet-packek:'),
+      ...shop().filter(i => i.kind === 'pack').map(line),
       '',
-      '👉 wearing · ✅ owned · 🔒 for sale',
-      'Buy: /frugal buy <id> · change (free): /frugal skin <id>, /frugal pack <id>',
+      tr('👉 wearing · ✅ owned · 🔒 for sale', '👉 viseled · ✅ megvan · 🔒 megvehető'),
+      tr('Buy: /frugal buy <id> · change (free): /frugal skin <id>, /frugal pack <id>', 'Vásárlás: /fukarlec buy <id> · átöltözés (ingyen): /fukarlec skin <id>, /fukarlec pack <id>'),
     ].join('\n')
   }
 
@@ -394,11 +401,11 @@ export const register: Register = (on, options) => {
         const result = credit(l, activity.days, s.date, budgets.daily)
         l = result.ledger
         if (result.gained > 0) {
-          const quests = result.quests.length > 0 ? ` 🎯 (${result.quests.length} quest${result.quests.length > 1 ? 's' : ''})` : ''
-          $io.toast((isFun ? say(pack().xp, { xp: result.gained }, s.at) : `frugal: +${result.gained} coins`) + quests, 10_000)
+          const quests = result.quests.length > 0 ? tr(` 🎯 (${result.quests.length} quest${result.quests.length > 1 ? 's' : ''})`, ` 🎯 (${result.quests.length} küldetés)`) : ''
+          $io.toast((isFun ? say(pack().xp, { xp: result.gained }, s.at) : tr(`frugal: +${result.gained} coins`, `fukarléc: +${result.gained} XP`)) + quests, 10_000)
         }
       } catch (err) {
-        $io.debug(`frugalitas xp: ${err instanceof Error ? err.message : String(err)}`)
+        $io.debug(tr(`frugalitas xp: ${err instanceof Error ? err.message : String(err)}`, `fukarlec xp: ${err instanceof Error ? err.message : String(err)}`))
         return xpView(l)
       }
     }
@@ -437,7 +444,7 @@ export const register: Register = (on, options) => {
         history = (await fetchActivity($io.fetch, conn!, addDays(s.date, -56), s.date)).days
         historyOn = s.date
       } catch (err) {
-        $io.debug(`frugalitas history: ${err instanceof Error ? err.message : String(err)}`)
+        $io.debug(tr(`frugalitas history: ${err instanceof Error ? err.message : String(err)}`, `fukarlec history: ${err instanceof Error ? err.message : String(err)}`))
       }
     }
   }
@@ -445,8 +452,8 @@ export const register: Register = (on, options) => {
   function questLine(s: Snapshot): string | undefined {
     if (budgets.daily <= 0) return undefined
     const q = questFor(s.date)
-    const sofar = s.today ? ` · so far ${q.progress(s.today)} ${q.done(s.today, budgets.daily) ? '✅' : '❌'}` : ''
-    return `🎯 Today's quest: ${q.text} (+${QUEST_XP} coins)${sofar}`
+    const sofar = s.today ? tr(` · so far ${q.progress(s.today)} ${q.done(s.today, budgets.daily) ? '✅' : '❌'}`, ` · eddig ${q.progress(s.today)} ${q.done(s.today, budgets.daily) ? '✅' : '❌'}`) : ''
+    return tr(`🎯 Today's quest: ${q.text} (+${QUEST_XP} coins)${sofar}`, `🎯 Mai küldetés: ${q.text} (+${QUEST_XP} garas)${sofar}`)
   }
 
   /** The advice that rests on LiteLLM's numbers, freshest first. */
@@ -528,7 +535,7 @@ export const register: Register = (on, options) => {
       keys: () => $.store.keys(),
       status: text => $.ui.status(text),
       toast: (text, timeoutMs) => $.ui.toast(text, { timeoutMs }),
-      notify: text => void $.ui.notify(text, { title: 'Frugalitas' }).catch(() => {}),
+      notify: text => void $.ui.notify(text, { title: tr('Frugalitas', 'Fukarléc') }).catch(() => {}),
       debug: text => $.ui.log(text, { to: 'debug' }),
       every: (ms, fn) => void $.clock.every(ms, fn),
       after: (ms, fn) => void $.clock.after(ms, fn),
@@ -536,11 +543,16 @@ export const register: Register = (on, options) => {
       model: () => $.session.model(),
       redraw: () => $.ui.invalidate('ui.render'),
     }
+    setMode(asMode((await $.store.get(MODE_KEY) as { mode?: unknown } | undefined)?.mode) ?? asMode(options.mode) ?? 'frugalitas')
     await $.command.register({
       name: 'frugal',
-      description: 'LiteLLM cost report: /frugal [<N> | refresh | allow | panel | tips | xp | shop | buy <id>]',
+      description: 'LiteLLM cost report: /frugal [<N> | refresh | allow | panel | tips | restart | handovers | xp | shop | buy <id> | mode <frugalitas|fukarlec>]',
     })
-    await $.ui.open({ id: PANE_ID, title: '🪙 Frugalitas' }).catch(() => {})
+    await $.command.register({
+      name: 'fukarlec',
+      description: 'LiteLLM költségriport, Fukarléc módban: /fukarlec [<N> | refresh | allow | panel | tips | restart | handovers | xp | shop | buy <id> | mode <frugalitas|fukarlec>]',
+    })
+    await $.ui.open({ id: PANE_ID, title: tr('🪙 Frugalitas', '🪙 Fukarléc') }).catch(() => {})
     conn = makeConn({
       baseUrl: await $.env.get('ANTHROPIC_BASE_URL'),
       authToken: await $.env.get('ANTHROPIC_AUTH_TOKEN'),
@@ -638,7 +650,7 @@ export const register: Register = (on, options) => {
       })
       if (e.agentId === undefined && expensiveTurn > 0 && turnSpend >= expensiveTurn) {
         const cost = turnSpend
-        io.toast(isFun ? say(pack().turn, { cost: money(cost), kind: inKind(cost) }, nowMs) : `Expensive turn: +${money(cost)}`, 8000)
+        io.toast(isFun ? say(pack().turn, { cost: money(cost), kind: inKind(cost, hufRate) }, nowMs) : tr(`Expensive turn: +${money(cost)}`, `Drága kör: +${money(cost)}`), 8000)
         await update($, lastTurnAtom, () => ({ cost, inputTokens: u.input_tokens, outputTokens: u.output_tokens, at: nowMs }))
         io.after(TURN_DISPLAY_MS, () => background(update($, lastTurnAtom, () => null)))
       }
@@ -746,54 +758,87 @@ export const register: Register = (on, options) => {
     const over = overScopes()
     if (over.length === 0 || (await $.store.get(`unlock:${snap.date}`)) !== undefined) return next(e)
     const names = over.map(s => SCOPE_NAMES[s]).join(', ')
-    return { drop: `🔒 Frugalitas: the ${names} budget is used up. If you really need to: /frugal allow (lifts it until midnight UTC).` }
+    return { drop: tr(`🔒 Frugalitas: the ${names} budget is used up. If you really need to: /frugal allow (lifts it until midnight UTC).`, `🔒 Fukarléc: elfogyott a ${names} keret. Ha mégis kell: /fukarlec allow (ma éjfélig, UTC, feloldja).`) }
   }).catch(($, e, next) => next(e))
 
-  // --- /frugal command -------------------------------------------------------
+  // --- /frugal and /fukarlec: the same command in either mode ---------------------------
 
-  on('command.run', { command: 'frugal' }, async ($, e) => {
+  for (const command of ['frugal', 'fukarlec']) {
+    on('command.run', { command }, async ($, e) => {
+    const modeArg = e.args.trim().toLowerCase().match(/^(mode|mód|mod)(?:\s+(\S+))?$/)
+    if (modeArg) {
+      const next = asMode(modeArg[2]?.replace('é', 'e'))
+      if (!next) return { text: tr(`Mode: ${mode()}. Switch: /frugal mode ${MODES.join(' | ')}`, `Mód: ${mode()}. Váltás: /fukarlec mode ${MODES.join(' | ')}`) }
+      setMode(next)
+      await $.store.set(MODE_KEY, { mode: next, updatedAt: await $.clock.now() })
+      if (io && conn) await refresh(io, true).catch(() => undefined)
+      if (ledger) await update($, xpAtom, () => xpView(ledger!))
+      await $.ui.invalidate('ui.render')
+      return { text: tr('🪙 Frugalitas mode: English, Old Penny, prices in kind in USD.', '🪙 Fukarléc mód: magyarul, Fukar bácsival, lángosban számolva.') }
+    }
     const $io = io
     if (!conn || !$io) {
       return {
-        text: 'Frugalitas: this session is not running through a LiteLLM proxy (no ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), so there is nothing to watch.',
+        text: tr('Frugalitas: this session is not running through a LiteLLM proxy (no ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), so there is nothing to watch.', 'Fukarléc: ez a session nem LiteLLM proxyn fut (nincs ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), nincs mit figyelni.'),
       }
     }
-    const arg = e.args.trim().toLowerCase()
+    const arg = canonicalArgs(e.args)
 
     if (arg === 'help' || arg === '?') {
       return {
         text: [
-          "/frugal            – this month's report",
-          '/frugal <N>        – the last N days',
-          '/frugal refresh    – reload the numbers',
-          '/frugal allow      – lift the over-budget block for today',
-          '/frugal panel      – open the cost dashboard',
-          "/frugal tips       – every current savings tip and today's quest",
-          '/frugal restart    – a small model writes a handover, then /clear and continue from it (… sonnet for a Sonnet)',
-          '/frugal handovers  – recent handovers · /frugal handovers <id> shows one · /frugal resume <id> continues from it',
-          '/frugal xp         – your rank and coins',
-          '/frugal shop       – skins and message packs',
-          '/frugal buy <id>   – buy with coins (and wear it)',
-          '/frugal skin <id>  – wear an owned skin · /frugal pack <id> – use an owned pack (never buys)',
+          ...tr(
+            [
+              "/frugal            – this month's report",
+              '/frugal <N>        – the last N days',
+              '/frugal refresh    – reload the numbers',
+              '/frugal allow      – lift the over-budget block for today',
+              '/frugal panel      – open the cost dashboard',
+              "/frugal tips       – every current savings tip and today's quest",
+              '/frugal restart    – a small model writes a handover, then /clear and continue from it (… sonnet for a Sonnet)',
+              '/frugal handovers  – recent handovers · /frugal handovers <id> shows one · /frugal resume <id> continues from it',
+              '/frugal xp         – your rank and coins',
+              '/frugal shop       – skins and message packs',
+              '/frugal buy <id>   – buy with coins (and wear it)',
+              '/frugal skin <id>  – wear an owned skin · /frugal pack <id> – use an owned pack (never buys)',
+              '/frugal mode <m>   – switch mode: frugalitas (English) or fukarlec (Hungarian); /fukarlec works too',
+            ],
+            [
+              '/fukarlec             – e havi riport',
+              '/fukarlec <N>         – az utolsó N nap',
+              '/fukarlec refresh     – adatok újratöltése',
+              '/fukarlec allow       – keret feletti blokk feloldása mára',
+              '/fukarlec panel       – költség-dashboard megnyitása',
+              '/fukarlec tips        – minden aktuális spórolási tipp és a mai küldetés',
+              '/fukarlec restart     – egy kis modell átadást ír, aztán /clear és onnan folytatás (… sonnet: Sonnettel)',
+              '/fukarlec handovers   – a legutóbbi átadások · … <id>: egy megnyitása · /fukarlec resume <id>: folytatás belőle',
+              '/fukarlec xp          – rangod és garasaid',
+              '/fukarlec shop        – skinek és üzenet-packek',
+              '/fukarlec buy <id>    – vásárlás garasért (utána fel is veszi)',
+              '/fukarlec skin <id>   – megvett skin felvétele · /fukarlec pack <id> – megvett pack felvétele (nem vásárol)',
+              '/fukarlec mode <m>    – módváltás: fukarlec (magyar) vagy frugalitas (angol); a /frugal is működik',
+              '(A régi magyar parancsnevek is működnek: frissít, engedd, tippek, újrakezd, bolt, vesz.)',
+            ],
+          ),
           '',
-          `Budgets: session ${money(budgets.session)}, daily ${money(budgets.daily)}, monthly ${money(budgets.monthly)} · mode: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`,
+          tr(`Budgets: session ${money(budgets.session)}, daily ${money(budgets.daily)}, monthly ${money(budgets.monthly)} · mode: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`, `Keretek: session ${money(budgets.session)}, napi ${money(budgets.daily)}, havi ${money(budgets.monthly)} · mód: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`),
         ].join('\n'),
       }
     }
 
     if (arg === 'restart' || arg === 'restart sonnet') {
       const rows = await $.session.messages()
-      if (rows.length === 0) return { text: 'Frugalitas: there is no conversation to hand over yet.' }
+      if (rows.length === 0) return { text: tr('Frugalitas: there is no conversation to hand over yet.', 'Fukarléc: még nincs beszélgetés, amit át lehetne adni.') }
       const transcript = condenseTranscript(rows, MAX_HANDOVER_CHARS)
-      const small = pickSummaryModel(prices, tokensOfText(transcript.length), arg === 'restart sonnet')
-      if (!small) return { text: 'Frugalitas: the proxy serves no Haiku or Sonnet with room for this conversation; nothing was cleared.' }
+      const small = pickSummaryModel(prices, tokensOfText(transcript.length), arg.endsWith('sonnet'))
+      if (!small) return { text: tr('Frugalitas: the proxy serves no Haiku or Sonnet with room for this conversation; nothing was cleared.', 'Fukarléc: a proxyn nincs olyan Haiku vagy Sonnet, amibe ez a beszélgetés belefér; nem töröltem semmit.') }
       const reply = await $.model.complete({
         model: small.name,
         system: HANDOVER_SYSTEM,
         prompt: handoverPrompt(transcript),
         maxTokens: 4_000,
       })
-      if (!reply.isAnswered) return { text: `Frugalitas: the handover could not be written (${reply.reason}); nothing was cleared.` }
+      if (!reply.isAnswered) return { text: tr(`Frugalitas: the handover could not be written (${reply.reason}); nothing was cleared.`, `Fukarléc: nem sikerült megírni az átadást (${reply.reason}); nem töröltem semmit.`) }
       const now = await $.clock.now()
       const id = now.toString(36)
       const home = await $.env.get('HOME')
@@ -809,9 +854,9 @@ export const register: Register = (on, options) => {
         void (async () => {
           await $.command.run({ command: 'clear', args: '' })
           await $.prompt.submit({ text: resumePrompt(id, reply.text) })
-        })().catch(err => $io.toast(`Frugalitas: the restart stopped half-way (${String(err)}); handover ${id} is saved.`, 20_000))
+        })().catch(err => $io.toast(tr(`Frugalitas: the restart stopped half-way (${String(err)}); handover ${id} is saved.`, `Fukarléc: az újrakezdés félúton megállt (${String(err)}); a(z) ${id} átadás megvan.`), 20_000))
       })
-      return { text: `🧳 Handover ${id} written by ${small.name} (~${money(cost)})${path ? `, saved to ${path}` : ''}. Clearing the conversation and continuing from it…` }
+      return { text: tr(`🧳 Handover ${id} written by ${small.name} (~${money(cost)})${path ? `, saved to ${path}` : ''}. Clearing the conversation and continuing from it…`, `🧳 A(z) ${id} átadást a ${small.name} írta (~${money(cost)})${path ? `, mentve: ${path}` : ''}. Törlöm a beszélgetést, és onnan folytatjuk…`) }
     }
 
     if (arg === 'handovers' || arg.startsWith('handovers ') || arg.startsWith('resume ')) {
@@ -824,35 +869,35 @@ export const register: Register = (on, options) => {
       all.sort((a, b) => b.at - a.at)
       const [what, id = ''] = arg.split(/\s+/)
       if (!id) {
-        if (all.length === 0) return { text: 'Frugalitas: no handovers yet. /frugal restart writes one.' }
+        if (all.length === 0) return { text: tr('Frugalitas: no handovers yet. /frugal restart writes one.', 'Fukarléc: még nincs átadás. A /fukarlec restart ír egyet.') }
         const rows = all.slice(0, 10).map(h => {
           const when = new Date(h.at).toISOString().replace('T', ' ').slice(0, 16)
           return `  ${h.id} · ${when} · ${h.model.replace(/^.*\//, '')} · ${handoverTitle(h.text)}`
         })
-        return { text: ['🧳 Handovers (newest first)', ...rows, '', 'Show one: /frugal handovers <id> · continue from it: /frugal resume <id> · files: ~/.claude/handovers/'].join('\n') }
+        return { text: [tr('🧳 Handovers (newest first)', '🧳 Átadások (a legújabbak elöl)'), ...rows, '', tr('Show one: /frugal handovers <id> · continue from it: /frugal resume <id> · files: ~/.claude/handovers/', 'Megnézni: /fukarlec handovers <id> · onnan folytatni: /fukarlec resume <id> · fájlok: ~/.claude/handovers/')].join('\n') }
       }
       const found = all.find(h => h.id === id)
-      if (!found) return { text: `Frugalitas: no handover ${id}. List them: /frugal handovers` }
+      if (!found) return { text: tr(`Frugalitas: no handover ${id}. List them: /frugal handovers`, `Fukarléc: nincs ilyen átadás: ${id}. Lista: /fukarlec handovers`) }
       if (what === 'resume') {
         $.clock.after(50, () => void $.prompt.submit({ text: resumePrompt(found.id, found.text) }).catch(() => {}))
-        return { text: `🧳 Continuing from handover ${found.id}…` }
+        return { text: tr(`🧳 Continuing from handover ${found.id}…`, `🧳 Folytatás a(z) ${found.id} átadásból…`) }
       }
-      return { text: [found.path ? `File: ${found.path}` : '', handoverMarkdown(found)].filter(Boolean).join('\n\n') }
+      return { text: [found.path ? tr(`File: ${found.path}`, `Fájl: ${found.path}`) : '', handoverMarkdown(found)].filter(Boolean).join('\n\n') }
     }
 
     if (arg === 'panel' || arg === 'pane' || arg === 'dashboard') {
-      await $.ui.open({ id: PANE_ID, title: '🪙 Frugalitas' })
-      return { text: 'Dashboard opened.' }
+      await $.ui.open({ id: PANE_ID, title: tr('🪙 Frugalitas', '🪙 Fukarléc') })
+      return { text: tr('Dashboard opened.', 'Dashboard panel megnyitva.') }
     }
 
     if (arg === 'allow') {
       const now = await $.clock.now()
       await $.store.set(`unlock:${utcDate(now)}`, { at: now })
-      return { text: '🔓 Fine, unlocked for today. Old Penny suffers in silence.' }
+      return { text: tr('🔓 Fine, unlocked for today. Old Penny suffers in silence.', '🔓 Rendben, mára feloldva. Fukar bácsi csendben szenved.') }
     }
 
     const s = await refresh($io, true)
-    if (!s) return { text: `Frugalitas: LiteLLM is not answering (${lastError ?? 'unknown error'}).` }
+    if (!s) return { text: tr(`Frugalitas: LiteLLM is not answering (${lastError ?? 'unknown error'}).`, `Fukarléc: a LiteLLM nem válaszol (${lastError ?? 'ismeretlen hiba'}).`) }
 
     const [verb = '', ...rest] = arg.split(/\s+/)
     if (verb === 'tips' || verb === 'tip') {
@@ -861,8 +906,8 @@ export const register: Register = (on, options) => {
       const quest = budgets.daily > 0 ? questLine(s) : undefined
       return {
         text: [
-          '💡 Savings tips',
-          ...(advice.tips.length > 0 ? advice.tips.map(t => `  ${t}`) : ['  No specific tips right now — nice work!']),
+          tr('💡 Savings tips', '💡 Spórolási tippek'),
+          ...(advice.tips.length > 0 ? advice.tips.map(t => `  ${t}`) : [tr('  No specific tips right now — nice work!', '  Most nincs konkrét tipp — szép munka!')]),
           ...(quest ? ['', quest] : []),
         ].join('\n'),
       }
@@ -871,18 +916,18 @@ export const register: Register = (on, options) => {
       const view = await creditXp($io, s)
       await update($, xpAtom, () => view)
       const l = ledger!
-      if (budgets.daily <= 0) return { text: 'Frugalitas: coins need a daily budget (/config → frugalitas → Daily budget).' }
+      if (budgets.daily <= 0) return { text: tr('Frugalitas: coins need a daily budget (/config → frugalitas → Daily budget).', 'Fukarléc: XP csak napi kerettel jár (/config → fukarlec → napi keret).') }
 
       if (verb === 'xp') return { text: xpText(l) }
       if (verb === 'shop') return { text: shopText(l) }
 
       const id = rest.join(' ')
-      const matches = SHOP.filter(i => i.id === id && (verb === 'buy' || i.kind === verb))
-      if (matches.length === 0) return { text: `No such item: "${id}". See /frugal shop` }
+      const matches = shop().filter(i => i.id === id && (verb === 'buy' || i.kind === verb))
+      if (matches.length === 0) return { text: tr(`No such item: "${id}". See /frugal shop`, `Nincs ilyen tétel: "${id}". Nézd meg: /fukarlec shop`) }
       if (matches.length > 1) {
         const ownsAll = matches.every(i => owns(l, i))
         return {
-          text: `"${id}" is both a skin and a pack${ownsAll ? ', both free and already yours' : ''}. To wear: /frugal skin ${id} or /frugal pack ${id}`,
+          text: tr(`"${id}" is both a skin and a pack${ownsAll ? ', both free and already yours' : ''}. To wear: /frugal skin ${id} or /frugal pack ${id}`, `"${id}" skin és pack is${ownsAll ? ', mindkettő ingyenes és már a tiéd' : ''}. Felvenni: /fukarlec skin ${id} vagy /fukarlec pack ${id}`),
         }
       }
       const item = matches[0]!
@@ -893,8 +938,8 @@ export const register: Register = (on, options) => {
       return {
         text:
           verb === 'buy'
-            ? `🛒 Bought and wearing: ${item.name} (${item.price} coins). ${balance(result.ledger)} left. Old Penny sheds a tear.`
-            : `${item.kind === 'skin' ? '👕' : '💬'} Now using: ${item.name}.`,
+            ? tr(`🛒 Bought and wearing: ${item.name} (${item.price} coins). ${balance(result.ledger)} left. Old Penny sheds a tear.`, `🛒 Megvetted és felvetted: ${item.name} (${item.price} garas). Maradt ${balance(result.ledger)}. Fukar bácsi könnyezik.`)
+            : tr(`${item.kind === 'skin' ? '👕' : '💬'} Now using: ${item.name}.`, `${item.kind === 'skin' ? '👕' : '💬'} Felvéve: ${item.name}.`),
       }
     }
 
@@ -918,16 +963,18 @@ export const register: Register = (on, options) => {
     const parallel = parallelUseTip(sessionCost, keyDelta(s))
     return {
       text: report({
-        title: days > 0 ? `🪙 Frugalitas – last ${days} days (${start} → ${s.date}, UTC)` : `🪙 Frugalitas – ${s.date.slice(0, 7)}`,
+        title: days > 0 ? tr(`🪙 Frugalitas – last ${days} days (${start} → ${s.date}, UTC)`, `🪙 Fukarléc – utolsó ${days} nap (${start} → ${s.date}, UTC)`) : tr(`🪙 Frugalitas – ${s.date.slice(0, 7)}`, `🪙 Fukarléc – ${s.date.slice(0, 7)}`),
         activity,
         spend: spendOf(s),
         budgets,
         todayDate: s.date,
         fun: isFun,
+        hufRate,
         streakDays: history ? streak(history.days, s.date, budgets.daily) : 0,
       }) + (parallel ? `\n\n${parallel}` : ''),
     }
-  })
+    })
+  }
 
   // --- Pane dashboard ----------------------------------------------------------
 
@@ -955,7 +1002,7 @@ export const register: Register = (on, options) => {
     if (!state) {
       return (
         <Box flexDirection="column">
-          <Text dimColor>{conn ? '🪙 Loading...' : '🪙 No LiteLLM connection'}</Text>
+          <Text dimColor>{conn ? tr('🪙 Loading...', '🪙 Betöltés...') : tr('🪙 No LiteLLM connection', '🪙 Nincs LiteLLM kapcsolat')}</Text>
         </Box>
       )
     }
@@ -967,8 +1014,8 @@ export const register: Register = (on, options) => {
 
     const scopes: { label: string; spent: number; budget: number }[] = [
       { label: 'Session', spent: spend.session, budget: budgets.session },
-      { label: 'Today  ', spent: spend.today, budget: budgets.daily },
-      { label: 'Month  ', spent: spend.month, budget: budgets.monthly },
+      { label: tr('Today  ', 'Ma     '), spent: spend.today, budget: budgets.daily },
+      { label: tr('Month  ', 'Hónap  '), spent: spend.month, budget: budgets.monthly },
     ]
 
     const models = new Map<string, Metrics>()
@@ -1006,7 +1053,7 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
-        <Text bold>🪙 Frugalitas {moodEmoji} {date}</Text>
+        <Text bold>🪙 {tr('Frugalitas', 'Fukarléc')} {moodEmoji} {date}</Text>
         <Text> </Text>
 
 
@@ -1022,7 +1069,7 @@ export const register: Register = (on, options) => {
         })}
 
         <Text> </Text>
-        <Text bold>Last {sparkDays.length} days</Text>
+        <Text bold>{tr(`Last ${sparkDays.length} days`, `Utolsó ${sparkDays.length} nap`)}</Text>
         {sparkCols > 0 && (
           <Raster
             key="pane-spark"
@@ -1065,31 +1112,41 @@ export const register: Register = (on, options) => {
             {contextLine(contextTokens, contextWindow, priceOf(sessionModel), progressBar(contextTokens / contextWindow, 10))}
           </Text>
         )}
-        <Text dimColor>Cache (month): {cacheHit}% hit, {money(activity.total.cacheSaved)} saved</Text>
-        {cacheWarmSinceAt === 0 && !isTurnRunning && <Text dimColor>⏳ Cache: starts when the next turn ends</Text>}
-        {isTurnRunning && <Text dimColor>⏳ Cache: fresh (turn running)</Text>}
+        <Text dimColor>
+          {tr(
+            `Cache (month): ${cacheHit}% hit, ${money(activity.total.cacheSaved)} saved`,
+            `Cache (hó): ${cacheHit}% hit, ${money(activity.total.cacheSaved)} megtakarítás`,
+          )}
+        </Text>
+        {cacheWarmSinceAt === 0 && !isTurnRunning && <Text dimColor>{tr('⏳ Cache: starts when the next turn ends', '⏳ Cache: az első kör végén indul')}</Text>}
+        {isTurnRunning && <Text dimColor>{tr('⏳ Cache: fresh (turn running)', '⏳ Cache: friss (fut a kör)')}</Text>}
         {cacheLeft !== undefined && (
           <Text color={cacheLeft <= 0 ? '#60a5fa' : cacheLeft <= 60_000 ? '#ef4444' : undefined} dimColor={cacheLeft > 60_000}>
             {cacheLeft > 0
               ? `⏳ Cache: ${clock(cacheLeft)} ${progressBar(cacheLeft / cacheTtl, 10)}`
-              : '❄️ Cache: expired — the next turn rewrites the context'}
+              : tr('❄️ Cache: expired — the next turn rewrites the context', '❄️ Cache: lejárt — a következő kör újraírja a contextet')}
           </Text>
         )}
         {restart && (
           <Text dimColor>
-            {'   '}next 10 turns: keep going ~{money(restart.keep)} · /compact ~{money(restart.compact)} ·{' '}
-            {showRestart && restartCost !== undefined ? `/frugal restart ~${money(restartCost)} · ` : ''}/clear ~
-            {money(restart.clear)} → {showRestart ? '/frugal restart' : restart.best === 'compact' ? '/compact' : 'keep going'} (new
-            task: /clear)
+            {'   '}
+            {tr(
+              `next 10 turns: keep going ~${money(restart.keep)} · /compact ~${money(restart.compact)} · `,
+              `következő 10 kör: folytatás ~${money(restart.keep)} · /compact ~${money(restart.compact)} · `,
+            )}
+            {showRestart && restartCost !== undefined ? `${cmd()} restart ~${money(restartCost)} · ` : ''}/clear ~
+            {money(restart.clear)} →{' '}
+            {showRestart ? `${cmd()} restart` : restart.best === 'compact' ? '/compact' : tr('keep going', 'folytasd')}{' '}
+            {tr('(new task: /clear)', '(új feladatnál /clear)')}
           </Text>
         )}
-        <Text dimColor>Total: {money(totalSpend)} · {activity.total.requests} requests</Text>
+        <Text dimColor>{tr(`Total: ${money(totalSpend)} · ${activity.total.requests} requests`, `Összesen: ${money(totalSpend)} · ${activity.total.requests} kérés`)}</Text>
 
         {isFun && (
           <Box flexDirection="column">
             <Text> </Text>
-            <Text>{inKind(totalSpend)}</Text>
-            {streakDays >= 2 && <Text color="#22c55e">{'🏆'} {streakDays} days within budget!</Text>}
+            <Text>{inKind(totalSpend, hufRate)}</Text>
+            {streakDays >= 2 && <Text color="#22c55e">{'🏆'} {tr(`${streakDays} days within budget!`, `${streakDays} napja kereten belül!`)}</Text>}
           </Box>
         )}
 
@@ -1116,7 +1173,7 @@ export const register: Register = (on, options) => {
           const r = rankOf(xp.earned)
           return (
             <Text dimColor>
-              {r.emoji} {r.name} · {xp.balance} coins · {progressBar(r.progress, 10)}
+              {r.emoji} {r.name} · {xp.balance} {tr('coins', 'garas')} · {progressBar(r.progress, 10)}
               {r.next ? ` → ${r.next.name}` : ''}
             </Text>
           )

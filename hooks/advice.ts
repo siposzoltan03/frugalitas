@@ -1,3 +1,4 @@
+import { tr } from './mode'
 import { money } from './format'
 import type { Day, Prices } from './litellm'
 
@@ -41,7 +42,7 @@ export function clock(ms: number): string {
 
 /** The status line's cache part: counting down after a turn, then expired. */
 export function cacheStatus(remainingMs: number): string {
-  if (remainingMs <= 0) return '❄️ cache expired'
+  if (remainingMs <= 0) return tr('❄️ cache expired', '❄️ cache lejárt')
   return remainingMs <= 60_000 ? `⌛ cache ${clock(remainingMs)}!` : `⏳ cache ${clock(remainingMs)}`
 }
 
@@ -76,6 +77,30 @@ export function restartCosts(
   return { keep, compact, clear, best: compact < keep * 0.9 ? 'compact' : 'keep' }
 }
 
+// --- subcommands ---------------------------------------------------------------------
+
+/** The Hungarian subcommand names of earlier versions, still accepted. */
+const HUNGARIAN_VERBS: Readonly<Record<string, string>> = {
+  frissít: 'refresh',
+  frissit: 'refresh',
+  engedd: 'allow',
+  tippek: 'tips',
+  tipp: 'tips',
+  bolt: 'shop',
+  vesz: 'buy',
+  újrakezd: 'restart',
+  ujrakezd: 'restart',
+  átadások: 'handovers',
+  atadasok: 'handovers',
+  folytat: 'resume',
+}
+
+/** `/fukarlec` arguments with the first word in English: `vesz matyo` → `buy matyo`. */
+export function canonicalArgs(args: string): string {
+  const [verb = '', ...rest] = args.trim().toLowerCase().split(/\s+/)
+  return [HUNGARIAN_VERBS[verb] ?? verb, ...rest].join(' ').trim()
+}
+
 // --- the dashboard's model and context lines ---------------------------------------
 
 /** `182k`, `1M`, `1.5M`. */
@@ -85,16 +110,16 @@ export function tokenCount(tokens: number): string {
 
 /** The session's model with its prices per million tokens. */
 export function modelLine(model: string, price: Prices | undefined): string {
-  const name = model.replace(/^.*\//, '') || 'unknown'
-  if (!price) return `Model: ${name}`
+  const name = model.replace(/^.*\//, '') || tr('unknown', 'ismeretlen')
+  if (!price) return tr(`Model: ${name}`, `Modell: ${name}`)
   const m = (perToken: number) => money(perToken * 1e6)
-  return `Model: ${name} · ${m(price.input)} in · ${m(price.output)} out · ${m(price.cacheRead)} cached /MTok`
+  return tr(`Model: ${name} · ${m(price.input)} in · ${m(price.output)} out · ${m(price.cacheRead)} cached /MTok`, `Modell: ${name} · ${m(price.input)} be · ${m(price.output)} ki · ${m(price.cacheRead)} cache-olvasás /MTok`)
 }
 
 /** How full the context window is, and what reading it costs every turn at the least. */
 export function contextLine(tokens: number, window: number, price: Prices | undefined, bar = ''): string {
   const percent = window > 0 ? Math.round((tokens / window) * 100) : 0
-  const read = price && tokens > 0 ? ` · each turn reads it for ≥ ${money(tokens * price.cacheRead)}` : ''
+  const read = price && tokens > 0 ? tr(` · each turn reads it for ≥ ${money(tokens * price.cacheRead)}`, ` · minden kör legalább ${money(tokens * price.cacheRead)}-ért olvassa`) : ''
   return `Context: ${tokenCount(tokens)} / ${tokenCount(window)}${bar ? ` ${bar}` : ''} ${percent}%${read}`
 }
 
@@ -159,7 +184,7 @@ export function pickSummaryModel(
 }
 
 /**
- * What the next `turns` turns cost after `/frugal restart`: the small model reads the condensed
+ * What the next `turns` turns cost after tr(`/frugal restart`, `/fukarlec restart`): the small model reads the condensed
  * transcript once (no cache) and writes the handover; the fresh session then starts from the
  * base plus the handover, written once and read on every later turn.
  */
@@ -215,8 +240,8 @@ export function handoverPrompt(transcript: string): string {
 
 export function resumePrompt(id: string, handover: string): string {
   return (
-    `Continue the work from handover ${id}, a summary of the previous conversation written by a smaller model. ` +
-    `Treat it as context and check it against the code before acting on it.\n\n${handover}`
+    tr(`Continue the work from handover ${id}, a summary of the previous conversation written by a smaller model. `, `Folytasd a munkát a(z) ${id} átadás alapján: az előző beszélgetés összefoglalója, egy kisebb modell írta. `) +
+    tr(`Treat it as context and check it against the code before acting on it.\n\n${handover}`, `Kezeld háttérként, és mielőtt építesz rá, ellenőrizd a kódban.\n\n${handover}`)
   )
 }
 
@@ -230,12 +255,12 @@ export function clearOrRewriteTip(
   if (!price || contextTokens < 50_000) return undefined
   const c = restartCosts(contextTokens, baseTokens, price, false)
   const showRestart = restart !== undefined && restartWorthIt(restart, c)
-  const same = showRestart ? '/frugal restart' : c.best === 'compact' ? '/compact' : 'just keep going'
+  const same = showRestart ? tr('/frugal restart', '/fukarlec restart') : c.best === 'compact' ? '/compact' : tr('just keep going', 'folytasd nyugodtan')
   return (
-    `🤔 The cache expired (${k(contextTokens)} context). The next ${RESTART_TURNS} turns cost: ` +
-    `keep going ~${money(c.keep)} · /compact ~${money(c.compact)} · ` +
-    (showRestart ? `/frugal restart ~${money(restart)} · ` : '') +
-    `/clear ~${money(c.clear)}. Same task: ${same}; new task: /clear.`
+    tr(`🤔 The cache expired (${k(contextTokens)} context). The next ${RESTART_TURNS} turns cost: `, `🤔 Lejárt a cache (${k(contextTokens)} context). A következő ${RESTART_TURNS} kör ára: `) +
+    tr(`keep going ~${money(c.keep)} · /compact ~${money(c.compact)} · `, `folytatás ~${money(c.keep)} · /compact ~${money(c.compact)} · `) +
+    (showRestart ? tr(`/frugal restart ~${money(restart)} · `, `/fukarlec restart ~${money(restart)} · `) : '') +
+    tr(`/clear ~${money(c.clear)}. Same task: ${same}; new task: /clear.`, `/clear ~${money(c.clear)}. Ugyanazon a feladaton: ${same}; új feladatnál: /clear.`)
   )
 }
 
@@ -243,8 +268,8 @@ export function clearOrRewriteTip(
 export function cacheSoonWarning(remainingMs: number, contextTokens: number, price: Prices | undefined): string | undefined {
   if (remainingMs <= 0 || remainingMs > 30_000 || contextTokens < 50_000) return undefined
   const cost = price ? ` ≈ ${money(contextTokens * price.cacheWrite)}` : ''
-  const compactNow = price ? ` (~${money(contextTokens * price.cacheRead + SUMMARY_TOKENS * price.output)} while it's warm)` : ''
-  return `⏳ The cache expires in ${Math.ceil(remainingMs / 1000)} s: rewriting ${k(contextTokens)} tokens would cost${cost || ' extra'}. Send now, or /compact now${compactNow}.`
+  const compactNow = price ? tr(` (~${money(contextTokens * price.cacheRead + SUMMARY_TOKENS * price.output)} while it's warm)`, ` (~${money(contextTokens * price.cacheRead + SUMMARY_TOKENS * price.output)}, amíg meleg)`) : ''
+  return tr(`⏳ The cache expires in ${Math.ceil(remainingMs / 1000)} s: rewriting ${k(contextTokens)} tokens would cost${cost || ' extra'}. Send now, or /compact now${compactNow}.`, `⏳ ${Math.ceil(remainingMs / 1000)} mp múlva lejár a cache: ${k(contextTokens)} token újraírása${cost} lenne. Küldj most, vagy /compact most${compactNow}.`)
 }
 
 export function cacheExpiryWarning(
@@ -259,15 +284,15 @@ export function cacheExpiryWarning(
   const cost = price ? ` ≈ ${money(contextTokens * price.cacheWrite)}` : ''
   const offerRestart =
     price && restart && restartWorthIt(restart.cost, restartCosts(contextTokens, restart.baseTokens, price, false))
-  const first = offerRestart ? `/compact or /frugal restart (~${money(restart.cost)}) first?` : '/compact first?'
-  return `⏳ ${minutes} min break: the cache expired, this turn rewrites ${k(contextTokens)} tokens${cost}. ${first}`
+  const first = offerRestart ? tr(`/compact or /frugal restart (~${money(restart.cost)}) first?`, `Előtte /compact vagy /fukarlec restart (~${money(restart.cost)})?`) : tr('/compact first?', 'Előtte /compact?')
+  return tr(`⏳ ${minutes} min break: the cache expired, this turn rewrites ${k(contextTokens)} tokens${cost}. ${first}`, `⏳ ${minutes} perc szünet: a cache lejárt, ez a kör ${k(contextTokens)} tokent ír újra${cost}. ${first}`)
 }
 
 /** Every turn reads the whole context from the cache at least once. */
 export function contextGrowthTip(contextTokens: number, price: Prices | undefined): string | undefined {
   if (contextTokens < 250_000) return undefined
-  const perTurn = price ? `, each turn costs ≥ ${money(contextTokens * price.cacheRead)} just to read it` : ''
-  return `🐘 The context is ${k(contextTokens)} tokens${perTurn}. /compact, or /clear for a new task.`
+  const perTurn = price ? tr(`, each turn costs ≥ ${money(contextTokens * price.cacheRead)} just to read it`, `, egy kör csak beolvasásra ≥ ${money(contextTokens * price.cacheRead)}`) : ''
+  return tr(`🐘 The context is ${k(contextTokens)} tokens${perTurn}. /compact, or /clear for a new task.`, `🐘 ${k(contextTokens)} token a context${perTurn}. /compact vagy új feladatnál /clear.`)
 }
 
 /** Roughly four characters a token. */
@@ -277,20 +302,20 @@ export function toolOutputTip(tool: string, what: string, chars: number): string
   const tokens = tokensOfText(chars)
   if (tokens < 15_000) return undefined
   const hint =
-    tool === 'Bash' ? 'next time `| tail -50` or `| grep`' : tool === 'Read' ? 'next time use offset/limit, or search for it' : 'narrow the request'
-  return `📦 The ${tool} output ${what ? `(${what}) ` : ''}was ~${k(tokens)} tokens — ${hint}.`
+    tool === 'Bash' ? tr('next time `| tail -50` or `| grep`', 'legközelebb `| tail -50` vagy `| grep`') : tool === 'Read' ? tr('next time use offset/limit, or search for it', 'legközelebb offset/limit, vagy keress rá') : tr('narrow the request', 'szűkítsd a kérést')
+  return tr(`📦 The ${tool} output ${what ? `(${what}) ` : ''}was ~${k(tokens)} tokens — ${hint}.`, `📦 A ${tool} ${what ? `(${what}) ` : ''}kimenete ~${k(tokens)} token volt — ${hint}.`)
 }
 
 export function repeatReadTip(path: string, count: number): string | undefined {
   if (count < 4) return undefined
   const name = path.replace(/^.*\//, '')
-  return `🔁 ${name} has been read ${count}× this session. Ask Claude to keep the relevant part in mind instead.`
+  return tr(`🔁 ${name} has been read ${count}× this session. Ask Claude to keep the relevant part in mind instead.`, `🔁 A ${name}-t már ${count}× olvasta be ebben a sessionben. Kérd, hogy a releváns részt jegyezze meg.`)
 }
 
 export function subagentTip(mainTokens: number, subTokens: number): string | undefined {
   const total = mainTokens + subTokens
   if (subTokens < 1_000_000 || total === 0 || subTokens / total < 0.4) return undefined
-  return `🤖 Subagents used ${Math.round((subTokens / total) * 100)}% of this session's tokens. Small tasks don't need them.`
+  return tr(`🤖 Subagents used ${Math.round((subTokens / total) * 100)}% of this session's tokens. Small tasks don't need them.`, `🤖 A session tokenjeinek ${Math.round((subTokens / total) * 100)}%-a subagenté. Kisebb feladatra elég a fő szál.`)
 }
 
 export function daysInMonth(date: string): number {
@@ -309,14 +334,14 @@ export function forecastTip(monthSpend: number, date: string, monthlyBudget: num
   if (Number(date.slice(8)) < 3 || monthSpend <= 0) return undefined
   const end = forecast(monthSpend, date)
   if (monthlyBudget > 0 && monthSpend >= monthlyBudget) {
-    return `📈 The monthly budget is already spent (${money(monthSpend)}/${money(monthlyBudget)}); at this pace the month ends at ~${money(end)}.`
+    return tr(`📈 The monthly budget is already spent (${money(monthSpend)}/${money(monthlyBudget)}); at this pace the month ends at ~${money(end)}.`, `📈 A havi keret már elfogyott (${money(monthSpend)}/${money(monthlyBudget)}); ezzel a tempóval a hó végén ~${money(end)} lesz.`)
   }
   if (monthlyBudget > 0 && end > monthlyBudget) {
     const daysLeft = daysInMonth(date) - Number(date.slice(8)) + 1
     const perDay = Math.max(0, monthlyBudget - monthSpend) / daysLeft
-    return `📈 At this pace the month ends at ~${money(end)} (budget ${money(monthlyBudget)}). To fit: ~${money(perDay)}/day.`
+    return tr(`📈 At this pace the month ends at ~${money(end)} (budget ${money(monthlyBudget)}). To fit: ~${money(perDay)}/day.`, `📈 Ezzel a tempóval a hó végén ~${money(end)} lesz (keret ${money(monthlyBudget)}). Hogy beleférj: ~${money(perDay)}/nap.`)
   }
-  return `📊 At this pace the month ends at ~${money(end)}${monthlyBudget > 0 ? ` (budget ${money(monthlyBudget)})` : ''}.`
+  return tr(`📊 At this pace the month ends at ~${money(end)}${monthlyBudget > 0 ? ` (budget ${money(monthlyBudget)})` : ''}.`, `📊 Ezzel a tempóval a hó végén ~${money(end)} lesz${monthlyBudget > 0 ? ` (keret ${money(monthlyBudget)})` : ''}.`)
 }
 
 /** What the day's output tokens cost, priced per model. */
@@ -330,17 +355,17 @@ export function outputTip(day: Day | undefined, prices: (model: string) => Price
   if (!day || day.metrics.spend < 2) return undefined
   const share = outputShare(day, prices)
   if (share < 0.35) return undefined
-  return `✍️ ${Math.round(share * 100)}% of the spend is output tokens (5× the price of input). Ask for terser answers and diffs, not whole files.`
+  return tr(`✍️ ${Math.round(share * 100)}% of the spend is output tokens (5× the price of input). Ask for terser answers and diffs, not whole files.`, `✍️ A költés ${Math.round(share * 100)}%-a output token (5× drágább az inputnál). Kérj tömörebb válaszokat, diff helyett ne teljes fájlt.`)
 }
 
 export function failedTip(day: Day | undefined): string | undefined {
   if (!day) return undefined
   const { failed, requests } = day.metrics
   if (failed < 3 || failed / Math.max(1, requests) < 0.02) return undefined
-  return `⚠️ ${failed} requests failed (${Math.round((failed / requests) * 100)}%). Retries cost too — check what keeps failing.`
+  return tr(`⚠️ ${failed} requests failed (${Math.round((failed / requests) * 100)}%). Retries cost too — check what keeps failing.`, `⚠️ ${failed} kérés hibára futott (${Math.round((failed / requests) * 100)}%). Az újrapróbálkozás is költ — nézd meg, mi akad el.`)
 }
 
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const WEEKDAYS = () => [tr('Sunday', 'vasárnap'), tr('Monday', 'hétfő'), tr('Tuesday', 'kedd'), tr('Wednesday', 'szerda'), tr('Thursday', 'csütörtök'), tr('Friday', 'péntek'), tr('Saturday', 'szombat')]
 
 /** The weekday whose active days cost markedly more than the rest, over at least three weeks of history. */
 export function weekdayTip(days: readonly Day[]): string | undefined {
@@ -357,7 +382,7 @@ export function weekdayTip(days: readonly Day[]): string | undefined {
   const avg = active.reduce((n, d) => n + d.metrics.spend, 0) / active.length
   const [wd, top] = [...sums].filter(([, s]) => s.n >= 2).sort((a, b) => b[1].spend / b[1].n - a[1].spend / a[1].n)[0] ?? []
   if (wd === undefined || !top || top.spend / top.n < avg * 1.5) return undefined
-  return `📅 ${WEEKDAYS[wd]}s are your dearest days (average ${money(top.spend / top.n)}, the rest ${money(avg)}).`
+  return tr(`📅 ${WEEKDAYS()[wd]}s are your dearest days (average ${money(top.spend / top.n)}, the rest ${money(avg)}).`, `📅 A ${WEEKDAYS()[wd]}i napjaid a legdrágábbak (átlag ${money(top.spend / top.n)}, a többi ${money(avg)}).`)
 }
 
 export type TokenUsage = { input: number; output: number; cacheRead: number; cacheWrite: number }
@@ -371,7 +396,7 @@ export function turnCost(u: TokenUsage, price: Prices, isHourCache = false): num
 /** The key spent clearly more than this session did: another session or tool shares the key. */
 export function parallelUseTip(sessionCost: number, keyDelta: number): string | undefined {
   if (keyDelta < 1 || keyDelta < sessionCost * 1.3 + 0.5) return undefined
-  return `👥 The key spent ${money(keyDelta)} during this session, the session itself ${money(sessionCost)}: the difference is most likely parallel use (another session or tool on the same key).`
+  return tr(`👥 The key spent ${money(keyDelta)} during this session, the session itself ${money(sessionCost)}: the difference is most likely parallel use (another session or tool on the same key).`, `👥 A kulcs ebben a sessionben ${money(keyDelta)}-t költött, ez a session maga ${money(sessionCost)}-t: a különbség valószínűleg párhuzamos használat (másik session vagy opencode).`)
 }
 
 /** Tokens a turn moved, weighted by what each kind costs relative to plain input. */
@@ -385,7 +410,7 @@ export function compactEffectTip(before: readonly number[], after: readonly numb
   const avg = (xs: readonly number[]) => xs.reduce((n, x) => n + x, 0) / xs.length
   const drop = 1 - avg(after.slice(0, 3)) / avg(before.slice(-3))
   if (drop < 0.1) return undefined
-  return `✂️ Since the /compact your turns are ~${Math.round(drop * 100)}% cheaper. Worth it!`
+  return tr(`✂️ Since the /compact your turns are ~${Math.round(drop * 100)}% cheaper. Worth it!`, `✂️ A /compact óta ~${Math.round(drop * 100)}%-kal olcsóbbak a köreid. Megérte!`)
 }
 
 // --- Daily quests ---------------------------------------------------------------
@@ -411,11 +436,21 @@ const modelsUsed = (d: Day) => Object.values(d.models).filter(m => m.spend > 0.0
 export const QUEST_XP = 5
 
 export const QUESTS: readonly Quest[] = [
-  { id: 'opus', text: 'keep Opus under 50% of the spend', done: d => opusShare(d) < 0.5, progress: d => `${pct(opusShare(d))} Opus` },
-  { id: 'cache', text: 'keep the cache hit above 85%', done: d => cacheHit(d) >= 0.85, progress: d => `today ${pct(cacheHit(d))}` },
-  { id: 'half', text: 'spend less than half the daily budget', done: (d, b) => b > 0 && d.metrics.spend <= b / 2, progress: d => `$${d.metrics.spend.toFixed(2)}` },
-  { id: 'models', text: 'use at most 2 models', done: d => modelsUsed(d) <= 2, progress: d => `${modelsUsed(d)} models` },
-  { id: 'perRequest', text: 'keep the average request under $0.15', done: d => perRequest(d) < 0.15, progress: d => `$${perRequest(d).toFixed(2)}/request` },
+  { id: 'opus', get text() {
+      return tr('keep Opus under 50% of the spend', 'maradj 50% Opus alatt')
+    }, done: d => opusShare(d) < 0.5, progress: d => `${pct(opusShare(d))} Opus` },
+  { id: 'cache', get text() {
+      return tr('keep the cache hit above 85%', 'legyen 85% fölött a cache hit')
+    }, done: d => cacheHit(d) >= 0.85, progress: d => tr(`today ${pct(cacheHit(d))}`, `ma ${pct(cacheHit(d))}`) },
+  { id: 'half', get text() {
+      return tr('spend less than half the daily budget', 'költs a napi keret felénél kevesebbet')
+    }, done: (d, b) => b > 0 && d.metrics.spend <= b / 2, progress: d => `$${d.metrics.spend.toFixed(2)}` },
+  { id: 'models', get text() {
+      return tr('use at most 2 models', 'használj legfeljebb 2 modellt')
+    }, done: d => modelsUsed(d) <= 2, progress: d => tr(`${modelsUsed(d)} models`, `${modelsUsed(d)} modell`) },
+  { id: 'perRequest', get text() {
+      return tr('keep the average request under $0.15', 'egy kérés átlagosan $0.15 alatt legyen')
+    }, done: d => perRequest(d) < 0.15, progress: d => tr(`$${perRequest(d).toFixed(2)}/request`, `$${perRequest(d).toFixed(2)}/kérés`) },
 ]
 
 /** The day's quest, the same for everyone on that day. */

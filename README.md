@@ -28,6 +28,23 @@ spend bookkeeping. It is active only in sessions that run through LiteLLM (`ANTH
 
 All days are UTC days, as LiteLLM counts them.
 
+## Modes: Frugalitas and Fukarléc
+
+One engine, two personalities. The mode changes words, characters and currency; budgets, coins, rank and every
+calculation stay the same.
+
+| | Frugalitas mode | Fukarléc mode |
+|---|---|---|
+| Language | English | Hungarian |
+| Mascot and skins | Old Penny and friends | Fukar bácsi: paraszt, csikós, kofa, juhász, matyó |
+| Message packs | Old Penny, Grandma, Bartender, Buccaneer, The Auditor | Fukar bácsi, Nagymama, Betyár, Kocsmai, NAV-ellenőr |
+| "In kind" | gumballs, coffees, pizzas… in USD | Túró Rudi, lángos, Balaton weekend… in HUF (`hufRate`) |
+
+- `/frugal mode fukarlec` or `/frugal mode frugalitas` switches right away and is remembered across sessions; the
+  default for a new install is the `mode` option in `/config`.
+- `/frugal` and `/fukarlec` are the same command in either mode, and the old Hungarian subcommand names still work.
+- The shop shows the current mode's skins and packs. What you bought stays yours, and each mode keeps what it wears.
+
 ## Prompt-cache countdown
 
 The prompt cache stays warm for 5 minutes (an hour with `promptCacheTtl: "1h"` or `CLAUDE_CODE_PROMPT_CACHE_TTL=1h`),
