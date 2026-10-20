@@ -44,6 +44,9 @@ calculation stay the same.
   default for a new install is the `mode` option in `/config`.
 - `/frugal` and `/fukarlec` are the same command in either mode, and the old Hungarian subcommand names still work.
 - The shop shows the current mode's skins and packs. What you bought stays yours, and each mode keeps what it wears.
+- Moving over from the Fukarléc plugin: its 0.2.0 release exports your garas to `~/.claude/fukarlec-ledger.json`;
+  Frugalitas folds them in once at the next session start (a day both credited counts once) and starts in Fukarléc
+  mode. Then `/plugin uninstall fukarlec`.
 
 ## Prompt-cache countdown
 
