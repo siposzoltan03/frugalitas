@@ -157,31 +157,64 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   void refresh()
 
   // Session spend: each assistant message priced token by token (opencode's own `cost` is 0 for custom providers).
+  // A subagent's messages count toward the session it was started from, as in the Claude Code plugin.
   const priced = new Map<string, { sid: string; cost: number }>() // messages update repeatedly while streaming
-  const off = api.event.on('message.updated', ev => {
-    const m = ev.properties.info
-    if (m.role !== 'assistant' || m.providerID !== PROVIDER) return
+  const rootOf = (id: string): string => {
+    for (let i = 0; i < 8; i++) {
+      const parent = api.state.session.get(id)?.parentID
+      if (!parent) break
+      id = parent
+    }
+    return id
+  }
+  /** Prices one assistant message into its root session; false when it isn't ours or has no price. */
+  const account = (m: any): boolean => {
+    if (m.role !== 'assistant' || m.providerID !== PROVIDER) return false
     const p = priceOf(m.modelID)
-    if (!p) return
+    if (!p) return false
     const t = m.tokens
-    priced.set(m.id, { sid: m.sessionID, cost: t.input * p.input + t.output * p.output + t.cache.read * p.cacheRead + t.cache.write * p.cacheWrite })
-    const s = sess(m.sessionID)
+    const root = rootOf(m.sessionID)
+    priced.set(m.id, { sid: root, cost: t.input * p.input + t.output * p.output + t.cache.read * p.cacheRead + t.cache.write * p.cacheWrite })
+    const s = sess(root)
     s.cost = 0
-    for (const v of priced.values()) if (v.sid === m.sessionID) s.cost += v.cost
-    if (m.time.completed) {
+    for (const v of priced.values()) if (v.sid === root) s.cost += v.cost
+    if (m.time.completed && m.sessionID === root) {
       s.model = m.modelID
       s.ctx = t.input + t.cache.read + t.cache.write
       if (s.baseCtx === 0) s.baseCtx = s.ctx
       if (m.time.created >= s.warmSince) s.warmSince = m.time.created
-      void refresh()
     }
+    return true
+  }
+  const off = api.event.on('message.updated', ev => {
+    const m = ev.properties.info
+    if (!account(m)) return
+    if (m.role === 'assistant' && m.time.completed) void refresh()
     touch()
-    checkBudgets(m.sessionID)
+    checkBudgets(rootOf(m.sessionID))
   })
+
+  /** A session opened before the plugin started (or resumed) has history the events never told us about. */
+  const backfilled = new Set<string>()
+  const backfill = async (sid: string) => {
+    if (backfilled.has(sid)) return
+    backfilled.add(sid)
+    try {
+      const ids = [sid, ...((await api.client.session.children({ path: { id: sid } })).data ?? []).map(c => c.id)]
+      for (const id of ids) for (const { info } of (await api.client.session.messages({ path: { id } })).data ?? []) account(info)
+      const s = sess(sid)
+      s.turnBase = s.cost // history is not a turn: no expensive-turn toast for it
+      touch()
+      checkBudgets(sid)
+    } catch (e: any) {
+      backfilled.delete(sid)
+      trace(`backfill failed: ${e?.message ?? e}`)
+    }
+  }
 
   // A turn ends at session.idle: toast if it was expensive.
   const offIdle = api.event.on('session.idle', ev => {
-    const s = sess(ev.properties.sessionID)
+    const s = sess(rootOf(ev.properties.sessionID))
     const cost = s.cost - s.turnBase
     s.turnBase = s.cost
     if (expensiveTurn > 0 && cost >= expensiveTurn) {
@@ -392,6 +425,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
         if (!rendered.has(props.session_id)) {
           rendered.add(props.session_id)
           trace(`slot render ${props.session_id}`)
+          void backfill(props.session_id)
         }
         return <text>{line(props.session_id)}</text>
       },
