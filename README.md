@@ -179,7 +179,8 @@ What works: the status line next to the prompt (session, today, month, mood, cac
 toasts, the expensive-turn toast, the cache warnings and keep/compact/clear advice, the `block` mode, the full report and tips (`/frugal` opens a menu), and coins, ranks and the message-pack shop
 (its own ledger in `~/.config/opencode/frugalitas-ledger.json`, separate from Claude Code's). `/frugal restart` as menu entries (a
 small model writes a handover, a new session opens with it pre-filled; files in
-`~/.config/opencode/frugalitas-handovers/`). Not yet: the dashboard, mascot and skins.
+`~/.config/opencode/frugalitas-handovers/`). The sidebar shows the mascot (half-block pixel art; option
+`mascot`: `small` default, `large`, `off`), budget bars, the cache-expired comparison, a rotating tip and the quest. Skins and packs are in the shop. Not yet: the full-screen dashboard.
 
 Two entry points, because opencode keeps TUI and server plugins apart. Both read one options file,
 `~/.config/opencode/frugalitas.json` (options given on a plugin entry override it):

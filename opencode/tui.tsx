@@ -29,6 +29,9 @@ import { balance, buy, earned, owns, progressBar, rankOf, wear, worn } from '../
 import type { Ledger } from '../hooks/xp'
 import { creditDays, loadLedger, saveLedger, shopItems, shopRow, xpText } from './ledger'
 import { listHandovers, rowsOf, writeHandover } from './restart'
+import { Mascot } from './mascot'
+import { skinById } from '../hooks/skins'
+import { worst } from '../hooks/format'
 import { adviceFrom, reportText, tipsText } from './report'
 import type { Advice } from './report'
 import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked, saveOption, trace } from './shared'
@@ -50,10 +53,8 @@ type Sess = {
 }
 
 const tui: TuiPlugin = async (api, entryOptions) => {
-  trace('tui plugin start')
   try {
     await run(api, entryOptions)
-    trace('tui plugin ready')
   } catch (e: any) {
     trace(`tui plugin failed: ${e?.stack ?? e}`)
     throw e
@@ -70,6 +71,8 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const expensiveTurn = num('expensiveTurn', 1)
   const hufRate = num('hufRate', 350)
   const isFun = options.fun !== false
+  // The sidebar mascot: 'small' (12×11 cells, default), 'large' (24×22) or 'off'.
+  const mascotScale: 1 | 2 | 0 = options.mascot === 'off' || !isFun ? 0 : options.mascot === 'large' ? 1 : 2
   setMode(asMode(options.mode) ?? 'frugalitas')
   const cacheTtl = cacheTtlMs(options.promptCacheTtl ?? process.env.CLAUDE_CODE_PROMPT_CACHE_TTL)
   const [ledger, setLedger] = createSignal<Ledger>(loadLedger(utcDate(Date.now())))
@@ -238,7 +241,6 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       s.turnBase = s.cost // history is not a turn: no expensive-turn toast for it
       touch()
       checkBudgets(sid)
-      trace(`backfill ${sid}: ${1 + children.length} session(s), ${seen} messages, ${counted} priced, cost ${s.cost.toFixed(2)}, skipped ${[...skipped].join(',') || 'none'}`)
     } catch (e: any) {
       trace(`backfill failed: ${e?.message ?? e}`)
     }
@@ -336,16 +338,16 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message, onConfirm: () => api.ui.dialog.clear() }))
   }
   const common = (sid?: string) => ({ conn, budgets, spend: spendOf(sid ?? ''), fun: isFun, hufRate })
-  /** Message packs for coins; picking one buys it (when owned: wears it). */
+  /** Mascot skins and message packs for coins; picking one buys it (when owned: wears it). */
   const shop = (note?: string) => {
     const l = ledger()
     api.ui.dialog.setSize('large')
     api.ui.dialog.replace(() =>
       api.ui.DialogSelect({
         title: tr(`🛒 Shop · ${balance(l)} coins${note ? ` · ${note}` : ''}`, `🛒 Bolt · ${balance(l)} garas${note ? ` · ${note}` : ''}`),
-        options: shopItems().map(i => ({ ...shopRow(l, i), value: i.id })),
+        options: shopItems().map(i => ({ ...shopRow(l, i), value: `${i.kind}:${i.id}` })),
         onSelect: o => {
-          const item = shopItems().find(i => i.id === o.value)!
+          const item = shopItems().find(i => `${i.kind}:${i.id}` === o.value)!
           const result = owns(l, item) ? wear(l, item) : buy(l, item)
           if ('error' in result) return shop(result.error)
           saveLedger(result.ledger)
@@ -431,7 +433,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       { title: tr('Last 30 days', 'Utolsó 30 nap'), description: '', run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 30 })) },
       { title: tr('Tips and quest', 'Tippek és küldetés'), description: tr('savings tips, today\'s quest', 'megtakarítási tippek, mai küldetés'), run: () => void show('Frugalitas', () => tipsText({ ...common(sid), priceOf, pack: pack() })) },
       { title: tr('Coins and rank', 'Garas és rang'), description: tr('what thrift has earned', 'amit a spórolás hozott'), run: () => void show('Frugalitas', async () => (budgets.daily > 0 ? xpText(ledger(), budgets.daily) : tr('Coins need a daily budget (dailyBudget in frugalitas.json).', 'Garashoz napi keret kell (dailyBudget a frugalitas.json-ban).'))) },
-      { title: tr('Shop', 'Bolt'), description: tr('message packs: buy or wear', 'üzenet-packek: vásárlás, viselés'), run: () => shop() },
+      { title: tr('Shop', 'Bolt'), description: tr('mascot skins and message packs: buy or wear', 'mascot-skinek és üzenet-packek: vásárlás, viselés'), run: () => shop() },
       { title: tr('Restart from a handover', 'Újrakezdés átadással'), description: tr('a small model summarises, a new session continues', 'kis modell összefoglal, új session folytatja'), run: () => void restart(false, sid) },
       { title: tr('Restart (Sonnet writes it)', 'Újrakezdés (Sonnet írja)'), description: tr('for conversations too big for Haiku', 'Haikunak túl nagy beszélgetésekhez'), run: () => void restart(true, sid) },
       { title: tr('Handovers', 'Átadások'), description: tr('read or continue from a saved one', 'mentett megnyitása vagy folytatása'), run: () => handovers() },
@@ -464,7 +466,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
         return (
           <box flexDirection="column">
             <text fg={theme.textMuted}>{`${name} ${money(spent)} / ${money(budget)}`}</text>
-            <text fg={color}>{`${progressBar(Math.min(1, ratio), 16)} ${Math.round(ratio * 100)}%`}</text>
+            <text fg={color}>{`${progressBar(Math.min(1, ratio), 16)}  ${Math.round(ratio * 100)}%`}</text>
           </box>
         )
       })
@@ -513,7 +515,6 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       session_prompt_right(_ctx, props) {
         if (!rendered.has(props.session_id)) {
           rendered.add(props.session_id)
-          trace(`slot render ${props.session_id}`)
           void backfill(props.session_id)
         }
         return <text>{line(props.session_id)}</text>
@@ -526,8 +527,9 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
         return (
           <box flexDirection="column" gap={1}>
             <text fg={theme.text}>
-              <b>{tr('🪙 Frugalitas', '🪙 Fukarléc')}</b>
+              <b>{tr('Frugalitas', 'Fukarléc')}</b>
             </text>
+            {mascotScale ? <Mascot skin={skinById(worn(ledger()).skin)} ratio={worst(spendOf(props.session_id), budgets)?.ratio} scale={mascotScale} /> : null}
             {budgetRows(props.session_id, theme)}
             {cache ? <text fg={theme.textMuted}>{cache}</text> : null}
             <text fg={theme.textMuted}>{`${r.emoji} ${r.name} · ${balance(ledger())} ${tr('coins', 'garas')}`}</text>

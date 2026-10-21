@@ -10,6 +10,7 @@ import { fetchActivity } from '../hooks/litellm'
 import type { Conn } from '../hooks/litellm'
 import { tr } from '../hooks/mode'
 import { modePacks } from '../hooks/packs'
+import { modeSkins } from '../hooks/skins'
 import { asLedger, balance, credit, creditFrom, earned, owns, progressBar, rankOf, worn } from '../hooks/xp'
 import type { Ledger, ShopItem } from '../hooks/xp'
 import { fetchLite } from './shared'
@@ -38,11 +39,11 @@ export async function creditDays(conn: Conn, l: Ledger, today: string, dailyBudg
   return { ledger: r.ledger, gained: r.gained, quests: r.quests.length }
 }
 
-/**
- * What the opencode shop sells: message packs only. Skins are the dashboard mascot's outfits, and the
- * opencode port has no mascot yet.
- */
-export const shopItems = (): ShopItem[] => modePacks().map(p => ({ kind: 'pack' as const, id: p.id, name: p.name, description: p.description, price: p.price }))
+/** What the shop sells: the mascot's skins, then the message packs. */
+export const shopItems = (): ShopItem[] => [
+  ...modeSkins().map(s => ({ kind: 'skin' as const, id: s.id, name: s.name, description: s.description, price: s.price })),
+  ...modePacks().map(p => ({ kind: 'pack' as const, id: p.id, name: p.name, description: p.description, price: p.price })),
+]
 
 export function xpText(l: Ledger, dailyBudget: number): string {
   const total = earned(l)
@@ -63,8 +64,8 @@ export function xpText(l: Ledger, dailyBudget: number): string {
 
 /** One shop row's title, price and state for the picker. */
 export function shopRow(l: Ledger, i: ShopItem): { title: string; footer: string; description: string } {
-  const wearing = worn(l).pack === i.id
+  const wearing = i.kind === 'skin' ? worn(l).skin === i.id : worn(l).pack === i.id
   const mark = wearing ? '👉' : owns(l, i) ? '✅' : '🔒'
   const price = i.price === 0 ? tr('free', 'ingyen') : tr(`${i.price} coins`, `${i.price} garas`)
-  return { title: `${mark} ${i.name}`, footer: price, description: i.description }
+  return { title: `${mark} ${i.name}`, footer: price, description: i.description, category: i.kind === 'skin' ? tr('Mascot skins', 'Mascot-skinek') : tr('Message packs', 'Üzenet-packek') }
 }
