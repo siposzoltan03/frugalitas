@@ -16,6 +16,7 @@ import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
 import type { Prices } from '../hooks/litellm'
 import { asMode, setMode, tr } from '../hooks/mode'
 import { fill, packById, pickLine, voice } from '../hooks/packs'
+import { reportText, tipsText } from './report'
 import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked, trace } from './shared'
 
 const POLL_MS = 5 * 60_000
@@ -209,6 +210,38 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       ? `🪙 ⚠︎ ${err()}`
       : statusLine(spendOf(sid), budgets, isFun, err() !== undefined) + cacheSuffix(sid)
 
+  /** `/frugal`: pick what to see; slash commands take no arguments, so the old `/frugal 7` is a menu entry. */
+  const show = async (title: string, text: () => Promise<string>) => {
+    api.ui.dialog.setSize('xlarge')
+    api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message: tr('Loading…', 'Betöltés…') }))
+    let message: string
+    try {
+      message = await text()
+    } catch (e: any) {
+      message = `⚠︎ ${String(e?.message ?? e)}`
+    }
+    api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message, onConfirm: () => api.ui.dialog.clear() }))
+  }
+  const common = (sid?: string) => ({ conn, budgets, spend: spendOf(sid ?? ''), fun: isFun, hufRate })
+  const menu = () => {
+    const sid = api.route.current.name === 'session' ? String((api.route.current as any).params?.sessionID ?? '') : undefined
+    const entries: { title: string; description: string; run: () => void }[] = [
+      { title: tr('This month', 'Ez a hónap'), description: tr('daily bars, models, cache', 'napi oszlopok, modellek, cache'), run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 0 })) },
+      { title: tr('Last 7 days', 'Utolsó 7 nap'), description: '', run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 7 })) },
+      { title: tr('Last 30 days', 'Utolsó 30 nap'), description: '', run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 30 })) },
+      { title: tr('Tips and quest', 'Tippek és küldetés'), description: tr('savings tips, today\'s quest', 'megtakarítási tippek, mai küldetés'), run: () => void show('Frugalitas', () => tipsText({ ...common(sid), priceOf, pack: pack() })) },
+      { title: tr('Refresh numbers', 'Számok frissítése'), description: tr('re-read today and month from LiteLLM', 'ma és hó újraolvasása'), run: () => void refresh().then(() => api.ui.toast({ title: 'Frugalitas', message: `today ${money(today() ?? 0)} · month ${money(month() ?? 0)}`, variant: 'info' })) },
+    ]
+    api.ui.dialog.setSize('medium')
+    api.ui.dialog.replace(() =>
+      api.ui.DialogSelect({
+        title: tr('Frugalitas', 'Fukarléc'),
+        options: entries.map((e, i) => ({ title: e.title, description: e.description || undefined, value: i })),
+        onSelect: o => entries[o.value as number]!.run(),
+      }),
+    )
+  }
+
   const rendered = new Set<string>()
   api.slots.register({
     slots: {
@@ -226,12 +259,12 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     commands: [
       {
         name: 'frugal.report',
-        title: 'Frugalitas: spend',
+        title: 'Frugalitas: report',
         category: 'Plugin',
         namespace: 'palette',
         slashName: 'frugal',
         run() {
-          api.ui.toast({ title: 'Frugalitas', message: `today ${money(today() ?? 0)} · month ${money(month() ?? 0)}`, variant: 'info' })
+          menu()
         },
       },
       {
