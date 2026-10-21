@@ -9,6 +9,9 @@ import {
   cacheStatus,
   cacheTtlMs,
   clearOrRewriteTip,
+  CONDENSE_RATIO,
+  pickSummaryModel,
+  restartViaSummaryCost,
   handoverMarkdown,
   handoverTitle,
   resumePrompt,
@@ -190,6 +193,18 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
 
   const busy = (sid: string) => api.state.session.status(sid)?.type === 'busy'
 
+  /** What a restart would cost for the next turns, estimated before the transcript is read. */
+  const estimateRestart = (ctx: number, baseCtx: number, model: string): number | undefined => {
+    const condensed = Math.round(ctx * CONDENSE_RATIO)
+    const small = pickSummaryModel(prices, condensed)
+    const main = priceOf(model)
+    return small && main ? restartViaSummaryCost(condensed, baseCtx, small.price, main) : undefined
+  }
+
+  /** The advice texts name Claude Code's commands; opencode's are different. */
+  const localize = (text: string) =>
+    text.replace(/\/(?:frugal|fukarlec) restart/g, tr('/frugal → Restart', '/frugal → Újrakezdés')).replace(/\/clear\b/g, '/new')
+
   /** Once a second: move the countdown, warn ~30 s before a big context's cache expires, advise at expiry. */
   let blockedSeen = Date.now()
   const timer = setInterval(() => {
@@ -207,15 +222,15 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
         const warning = cacheSoonWarning(remaining, s.ctx, priceOf(s.model))
         if (warning) {
           s.soonFor = s.warmSince
-          const message = isFun ? voice(warning, pack(), t) : warning
+          const message = localize(isFun ? voice(warning, pack(), t) : warning)
           api.ui.toast({ title: 'Frugalitas', message, variant: 'warning', duration: 20_000 })
           if (s.ctx * (priceOf(s.model)?.cacheWrite ?? 0) >= 0.5) void api.attention.notify({ title: 'Frugalitas', message: warning })
         }
       }
       if (remaining <= 0 && s.expiredFor !== s.warmSince) {
         s.expiredFor = s.warmSince
-        const tip = clearOrRewriteTip(s.ctx, s.baseCtx, priceOf(s.model))
-        if (tip) api.ui.toast({ title: 'Frugalitas', message: isFun ? voice(tip, pack(), t) : tip, variant: 'info', duration: 20_000 })
+        const tip = clearOrRewriteTip(s.ctx, s.baseCtx, priceOf(s.model), estimateRestart(s.ctx, s.baseCtx, s.model))
+        if (tip) api.ui.toast({ title: 'Frugalitas', message: localize(isFun ? voice(tip, pack(), t) : tip), variant: 'info', duration: 20_000 })
       }
     }
   }, 1000)
