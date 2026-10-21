@@ -21,14 +21,14 @@ import { inKind, money, ratios, SCOPE_NAMES, statusLine, utcDate } from '../hook
 import type { Budgets, Scope, Spend } from '../hooks/format'
 import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
 import type { Prices } from '../hooks/litellm'
-import { asMode, setMode, tr } from '../hooks/mode'
+import { asMode, mode, setMode, tr } from '../hooks/mode'
 import { fill, packById, pickLine, voice } from '../hooks/packs'
 import { balance, buy, earned, owns, progressBar, rankOf, wear, worn } from '../hooks/xp'
 import type { Ledger } from '../hooks/xp'
 import { creditDays, loadLedger, saveLedger, shopItems, shopRow, xpText } from './ledger'
 import { listHandovers, rowsOf, writeHandover } from './restart'
 import { reportText, tipsText } from './report'
-import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked, trace } from './shared'
+import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked, saveOption, trace } from './shared'
 
 const POLL_MS = 5 * 60_000
 
@@ -80,6 +80,8 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const [date, setDate] = createSignal(utcDate(Date.now()))
   const [err, setErr] = createSignal<string | undefined>()
   const [now, setNow] = createSignal(Date.now())
+  // The texts read the mode through tr(); this signal makes the status line and sidebar redraw when it changes.
+  const [modeSeen, setModeSeen] = createSignal(mode())
   const [sessions, setSessions] = createSignal<Record<string, Sess>>({})
   const sess = (id: string): Sess =>
     (sessions()[id] ??= { cost: 0, turnBase: 0, warmSince: 0, ctx: 0, baseCtx: 0, model: '', soonFor: 0, expiredFor: 0 })
@@ -306,7 +308,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   }
 
   const line = (sid: string) =>
-    err() && today() === undefined
+    (modeSeen(), err()) && today() === undefined
       ? `🪙 ⚠︎ ${err()}`
       : statusLine(spendOf(sid), budgets, isFun, err() !== undefined) + cacheSuffix(sid)
 
@@ -395,6 +397,20 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     )
   }
 
+  /** Frugalitas (English, USD) <-> Fukarléc (Hungarian, HUF), remembered in frugalitas.json. */
+  const switchMode = () => {
+    const next = mode() === 'frugalitas' ? 'fukarlec' : 'frugalitas'
+    setMode(next)
+    setModeSeen(next)
+    try {
+      saveOption('mode', next)
+    } catch (e: any) {
+      trace(`could not save the mode: ${e?.message ?? e}`)
+    }
+    api.ui.dialog.clear()
+    api.ui.toast({ title: 'Frugalitas', message: next === 'fukarlec' ? '🇭🇺 Fukarléc mód: magyarul beszélünk, Fukar bácsi a boltos.' : '🇬🇧 Frugalitas mode: English, Old Penny keeps the shop.', variant: 'info' })
+  }
+
   const menu = () => {
     const sid = api.route.current.name === 'session' ? String((api.route.current as any).params?.sessionID ?? '') : undefined
     const entries: { title: string; description: string; run: () => void }[] = [
@@ -407,6 +423,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       { title: tr('Restart from a handover', 'Újrakezdés átadással'), description: tr('a small model summarises, a new session continues', 'kis modell összefoglal, új session folytatja'), run: () => void restart(false, sid) },
       { title: tr('Restart (Sonnet writes it)', 'Újrakezdés (Sonnet írja)'), description: tr('for conversations too big for Haiku', 'Haikunak túl nagy beszélgetésekhez'), run: () => void restart(true, sid) },
       { title: tr('Handovers', 'Átadások'), description: tr('read or continue from a saved one', 'mentett megnyitása vagy folytatása'), run: () => handovers() },
+      { title: tr('Switch to Fukarléc (Hungarian)', 'Váltás Frugalitasra (angol)'), description: tr('words, characters and currency change; budgets and coins stay', 'a szavak, szereplők és pénznem változik; a keretek és garasok maradnak'), run: switchMode },
       { title: tr('Refresh numbers', 'Számok frissítése'), description: tr('re-read today and month from LiteLLM', 'ma és hó újraolvasása'), run: () => void refresh().then(() => api.ui.toast({ title: 'Frugalitas', message: `today ${money(today() ?? 0)} · month ${money(month() ?? 0)}`, variant: 'info' })) },
     ]
     api.ui.dialog.setSize('medium')
@@ -453,6 +470,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
         return <text>{line(props.session_id)}</text>
       },
       sidebar_content(ctx, props) {
+        modeSeen()
         const theme = ctx.theme.current
         const r = rankOf(earned(ledger()))
         const cache = cacheSuffix(props.session_id).replace(/^ · /, '')
@@ -481,6 +499,14 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
         run() {
           menu()
         },
+      },
+      {
+        name: 'frugal.mode',
+        title: 'Frugalitas: switch mode (Frugalitas / Fukarléc)',
+        category: 'Plugin',
+        namespace: 'palette',
+        slashName: 'frugal-mode',
+        run: switchMode,
       },
       {
         name: 'frugal.allow',

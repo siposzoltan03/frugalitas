@@ -98,3 +98,13 @@ export function trace(message: string): void {
     appendFileSync(join(homedir(), '.config', 'opencode', 'frugalitas-debug.log'), `${new Date().toISOString()} ${message}\n`)
   } catch {}
 }
+
+/** Writes one option into frugalitas.json (keeping the others), so a choice made in the TUI survives a restart. */
+export function saveOption(key: string, value: unknown): void {
+  let file: Options = {}
+  try {
+    const parsed = JSON.parse(readFileSync(OPTIONS_FILE, 'utf8'))
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) file = parsed
+  } catch {}
+  writeFileSync(OPTIONS_FILE, JSON.stringify({ ...file, [key]: value }, null, 2) + '\n')
+}
