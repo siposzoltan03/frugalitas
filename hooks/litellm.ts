@@ -1,4 +1,7 @@
-import type { HttpInit, HttpResponse } from 'claude-code'
+// Host-neutral: no Claude Code import. The Claude Code `http` client and opencode's `fetch`
+// (wrapped, see opencode/tui.tsx) both fit these shapes.
+export type HttpInit = { headers?: Record<string, string> }
+export type HttpResponse = { ok: boolean; status: number; text: string }
 
 // The LiteLLM proxy's own spend bookkeeping, read with the same virtual key
 // and headers Claude Code uses (ANTHROPIC_BASE_URL / _AUTH_TOKEN / _CUSTOM_HEADERS).

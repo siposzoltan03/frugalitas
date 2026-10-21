@@ -169,6 +169,34 @@ For local development from a clone:
 
 With a local folder as the marketplace, `/reload-plugins` picks up edits.
 
+## opencode
+
+An experimental port runs in [opencode](https://opencode.ai) (tested on 1.18.x) and shares the Claude Code plugin's
+LiteLLM, pricing, advice and message modules. It reads the connection from an opencode provider named `litellm`
+(`baseURL`, `apiKey`, `headers`).
+
+What works: the status line next to the prompt (session, today, month, mood, cache countdown), the 80% and 100% budget
+toasts, the expensive-turn toast, the cache warnings and keep/compact/clear advice, `/frugal` (today and month in a
+toast), and the `block` mode. Not yet: the full report, `restart`, the dashboard, coins and the shop.
+
+Two entry points, because opencode keeps TUI and server plugins apart. Give both the same options:
+
+`~/.config/opencode/tui.json`:
+
+```json
+{ "plugin": [["/path/to/frugalitas/opencode/tui.tsx", { "sessionBudget": 10, "dailyBudget": 25, "monthlyBudget": 500 }]] }
+```
+
+`~/.config/opencode/opencode.jsonc` (the budget guard; put it in the global config, not a workspace one that gets regenerated):
+
+```jsonc
+"plugin": [["/path/to/frugalitas/opencode/server.ts", { "overBudget": "warn", "sessionBudget": 10, "dailyBudget": 25, "monthlyBudget": 500 }]]
+```
+
+Options: `sessionBudget`, `dailyBudget`, `monthlyBudget`, `overBudget` (`warn`/`block`), `expensiveTurn`, `fun`, `mode`,
+`hufRate`, `promptCacheTtl`. With `overBudget: "block"` a prompt over budget is refused; opencode only shows "Failed to
+send prompt", so the reason comes as a toast. `/frugal-allow` (palette) lifts the block for the UTC day.
+
 ## Settings
 
 `/config` → frugalitas: session, daily and monthly budgets (USD, 0 = none), `warn`/`block` mode, the expensive-turn
