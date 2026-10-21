@@ -29,6 +29,7 @@ import { balance, buy, earned, owns, progressBar, rankOf, wear, worn } from '../
 import type { Ledger } from '../hooks/xp'
 import { creditDays, loadLedger, saveLedger, shopItems, shopRow, xpText } from './ledger'
 import { listHandovers, rowsOf, writeHandover } from './restart'
+import { mascotMood } from '../hooks/mascot'
 import { Mascot } from './mascot'
 import { skinById } from '../hooks/skins'
 import { worst } from '../hooks/format'
@@ -532,6 +533,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
               <b>{tr('Frugalitas', 'Fukarléc')}</b>
             </text>
             {mascotScale ? <Mascot skin={skinById(worn(ledger()).skin)} ratio={worst(spendOf(props.session_id), budgets)?.ratio} scale={mascotScale} backdrop={mascotBackdrop} /> : null}
+            {mascotScale ? <text fg={theme.textMuted}>{`„${pickLine(pack().sayings[mascotMood(worst(spendOf(props.session_id), budgets)?.ratio)], Number(date().slice(8)))}”`}</text> : null}
             {budgetRows(props.session_id, theme)}
             {cache ? <text fg={theme.textMuted}>{cache}</text> : null}
             <text fg={theme.textMuted}>{`${r.emoji} ${r.name} · ${balance(ledger())} ${tr('coins', 'garas')}`}</text>
