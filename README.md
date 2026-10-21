@@ -176,8 +176,7 @@ LiteLLM, pricing, advice and message modules. It reads the connection from an op
 (`baseURL`, `apiKey`, `headers`).
 
 What works: the status line next to the prompt (session, today, month, mood, cache countdown), the 80% and 100% budget
-toasts, the expensive-turn toast, the cache warnings and keep/compact/clear advice, `/frugal` (today and month in a
-toast), the `block` mode, the full report and tips (`/frugal` opens a menu), and coins, ranks and the message-pack shop
+toasts, the expensive-turn toast, the cache warnings and keep/compact/clear advice, the `block` mode, the full report and tips (`/frugal` opens a menu), and coins, ranks and the message-pack shop
 (its own ledger in `~/.config/opencode/frugalitas-ledger.json`, separate from Claude Code's). Not yet: `restart`, the
 dashboard, mascot and skins.
 
