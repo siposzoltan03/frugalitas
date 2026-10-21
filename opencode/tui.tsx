@@ -23,7 +23,7 @@ import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
 import type { Prices } from '../hooks/litellm'
 import { asMode, setMode, tr } from '../hooks/mode'
 import { fill, packById, pickLine, voice } from '../hooks/packs'
-import { balance, buy, owns, wear, worn } from '../hooks/xp'
+import { balance, buy, earned, owns, progressBar, rankOf, wear, worn } from '../hooks/xp'
 import type { Ledger } from '../hooks/xp'
 import { creditDays, loadLedger, saveLedger, shopItems, shopRow, xpText } from './ledger'
 import { listHandovers, rowsOf, writeHandover } from './restart'
@@ -363,6 +363,28 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     )
   }
 
+  /** Sidebar block: budgets as bars, the cache countdown and the rank (spike). */
+  const budgetRows = (sid: string, theme: any) => {
+    const spend = spendOf(sid)
+    const rows: [string, number, number][] = [
+      [tr('session', 'session'), spend.session, budgets.session],
+      [tr('today', 'ma'), spend.today, budgets.daily],
+      [tr('month', 'hó'), spend.month, budgets.monthly],
+    ]
+    return rows
+      .filter(([, , budget]) => budget > 0)
+      .map(([name, spent, budget]) => {
+        const ratio = spent / budget
+        const color = ratio >= 1 ? theme.error : ratio >= 0.8 ? theme.warning : theme.success
+        return (
+          <box flexDirection="column">
+            <text fg={theme.textMuted}>{`${name} ${money(spent)} / ${money(budget)}`}</text>
+            <text fg={color}>{`${progressBar(Math.min(1, ratio), 16)} ${Math.round(ratio * 100)}%`}</text>
+          </box>
+        )
+      })
+  }
+
   const rendered = new Set<string>()
   api.slots.register({
     slots: {
@@ -372,6 +394,21 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
           trace(`slot render ${props.session_id}`)
         }
         return <text>{line(props.session_id)}</text>
+      },
+      sidebar_content(ctx, props) {
+        const theme = ctx.theme.current
+        const r = rankOf(earned(ledger()))
+        const cache = cacheSuffix(props.session_id).replace(/^ · /, '')
+        return (
+          <box flexDirection="column" gap={1}>
+            <text fg={theme.text}>
+              <b>{tr('🪙 Frugalitas', '🪙 Fukarléc')}</b>
+            </text>
+            {budgetRows(props.session_id, theme)}
+            {cache ? <text fg={theme.textMuted}>{cache}</text> : null}
+            <text fg={theme.textMuted}>{`${r.emoji} ${r.name} · ${balance(ledger())} ${tr('coins', 'garas')}`}</text>
+          </box>
+        )
       },
     },
   })
