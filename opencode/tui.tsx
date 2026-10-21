@@ -9,6 +9,8 @@ import {
   cacheStatus,
   cacheTtlMs,
   clearOrRewriteTip,
+  restartCosts,
+  restartWorthIt,
   CONDENSE_RATIO,
   pickSummaryModel,
   restartViaSummaryCost,
@@ -17,17 +19,18 @@ import {
   resumePrompt,
 } from '../hooks/advice'
 import type { Handover } from '../hooks/advice'
-import { inKind, money, ratios, SCOPE_NAMES, statusLine, utcDate } from '../hooks/format'
+import { addDays, inKind, money, ratios, SCOPE_NAMES, statusLine, utcDate } from '../hooks/format'
 import type { Budgets, Scope, Spend } from '../hooks/format'
 import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
-import type { Prices } from '../hooks/litellm'
+import type { Day, Prices } from '../hooks/litellm'
 import { asMode, mode, setMode, tr } from '../hooks/mode'
 import { fill, packById, pickLine, voice } from '../hooks/packs'
 import { balance, buy, earned, owns, progressBar, rankOf, wear, worn } from '../hooks/xp'
 import type { Ledger } from '../hooks/xp'
 import { creditDays, loadLedger, saveLedger, shopItems, shopRow, xpText } from './ledger'
 import { listHandovers, rowsOf, writeHandover } from './restart'
-import { reportText, tipsText } from './report'
+import { adviceFrom, reportText, tipsText } from './report'
+import type { Advice } from './report'
 import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked, saveOption, trace } from './shared'
 
 const POLL_MS = 5 * 60_000
@@ -79,6 +82,9 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const [month, setMonth] = createSignal<number | undefined>()
   const [date, setDate] = createSignal(utcDate(Date.now()))
   const [err, setErr] = createSignal<string | undefined>()
+  const [advice, setAdvice] = createSignal<Advice | undefined>()
+  let history: Day[] | undefined // ~8 weeks, fetched once a day for the weekday tip
+  let historyOn = ''
   const [now, setNow] = createSignal(Date.now())
   // The texts read the mode through tr(); this signal makes the status line and sidebar redraw when it changes.
   const [modeSeen, setModeSeen] = createSignal(mode())
@@ -145,6 +151,11 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       setMonth(a.total.spend)
       setToday(a.days.find(x => x.date === d)?.metrics.spend ?? 0)
       setErr(undefined)
+      if (historyOn !== d) {
+        history = (await fetchActivity(fetchLite, conn, addDays(d, -56), d).catch(() => undefined))?.days
+        historyOn = d
+      }
+      setAdvice(adviceFrom({ month: a, history, date: d, budgets, priceOf, fun: isFun, pack: pack() }))
       for (const sid of Object.keys(sessions())) checkBudgets(sid)
       void creditToday(d)
     } catch (e: any) {
@@ -408,6 +419,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       trace(`could not save the mode: ${e?.message ?? e}`)
     }
     api.ui.dialog.clear()
+    void refresh() // the advice texts are built in the mode's language
     api.ui.toast({ title: 'Frugalitas', message: next === 'fukarlec' ? '🇭🇺 Fukarléc mód: magyarul beszélünk, Fukar bácsi a boltos.' : '🇬🇧 Frugalitas mode: English, Old Penny keeps the shop.', variant: 'info' })
   }
 
@@ -458,6 +470,43 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       })
   }
 
+  /** Sidebar advice: once the cache has expired, what the next turns cost each way; else one rotating tip. */
+  const adviceBlock = (sid: string, theme: any) => {
+    const s = sessions()[sid]
+    const p = s && priceOf(s.model)
+    const expired = s && p && s.warmSince > 0 && !busy(sid) && now() > s.warmSince + cacheTtl && s.ctx >= 50_000
+    const blocks: any[] = []
+    if (expired && s && p) {
+      const c = restartCosts(s.ctx, s.baseCtx, p, false)
+      const restart = estimateRestart(s.ctx, s.baseCtx, s.model)
+      const showRestart = restart !== undefined && restartWorthIt(restart, c)
+      const row = (label: string, cost: number, best: boolean) => <text fg={best ? theme.success : theme.textMuted}>{`${best ? '▸' : ' '} ${label.padEnd(11)} ~${money(cost)}`}</text>
+      blocks.push(
+        <box flexDirection="column">
+          <text fg={theme.warning}>{tr(`❄️ Cache expired · ${Math.round(s.ctx / 1000)}k context`, `❄️ Lejárt a cache · ${Math.round(s.ctx / 1000)}k context`)}</text>
+          <text fg={theme.textMuted}>{tr('Next 10 turns:', 'Következő 10 kör:')}</text>
+          {row(tr('keep going', 'folytatás'), c.keep, c.best === 'keep' && !showRestart)}
+          {row('/compact', c.compact, c.best === 'compact' && !showRestart)}
+          {showRestart ? row(tr('restart', 'újrakezdés'), restart!, true) : null}
+          {row('/new', c.clear, false)}
+          <text fg={theme.textMuted}>{tr('Same task: ▸ · new task: /new', 'Ugyanaz a feladat: ▸ · új feladat: /new')}</text>
+        </box>,
+      )
+    }
+    const a = advice()
+    if (a && a.tips.length > 0) {
+      const tip = localize(a.tips[Math.floor(now() / 20_000) % a.tips.length]!)
+      blocks.push(
+        <box flexDirection="column">
+          <text fg={theme.textMuted}>{tr(`💡 Tip ${(Math.floor(now() / 20_000) % a.tips.length) + 1}/${a.tips.length}`, `💡 Tipp ${(Math.floor(now() / 20_000) % a.tips.length) + 1}/${a.tips.length}`)}</text>
+          <text fg={theme.text}>{tip}</text>
+        </box>,
+      )
+    }
+    if (a?.quest) blocks.push(<text fg={theme.textMuted}>{a.quest}</text>)
+    return blocks
+  }
+
   const rendered = new Set<string>()
   api.slots.register({
     slots: {
@@ -482,6 +531,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
             {budgetRows(props.session_id, theme)}
             {cache ? <text fg={theme.textMuted}>{cache}</text> : null}
             <text fg={theme.textMuted}>{`${r.emoji} ${r.name} · ${balance(ledger())} ${tr('coins', 'garas')}`}</text>
+            {adviceBlock(props.session_id, theme)}
           </box>
         )
       },

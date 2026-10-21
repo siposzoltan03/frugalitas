@@ -3,7 +3,7 @@ import { QUEST_XP, failedTip, forecastTip, outputTip, questFor, weekdayTip } fro
 import { addDays, report, streak, tips, utcDate } from '../hooks/format'
 import type { Budgets, Spend } from '../hooks/format'
 import { fetchActivity } from '../hooks/litellm'
-import type { Conn, Prices } from '../hooks/litellm'
+import type { Activity, Conn, Day, Prices } from '../hooks/litellm'
 import { tr } from '../hooks/mode'
 import { voice } from '../hooks/packs'
 import type { Pack } from '../hooks/packs'
@@ -32,6 +32,38 @@ export async function reportText(c: Common & { days: number }): Promise<string> 
   })
 }
 
+export type Advice = { tips: string[]; quest: string | null }
+
+/** The tips and the quest line from already-fetched numbers (this month's activity, ~8 weeks of history). */
+export function adviceFrom(o: {
+  month: Activity
+  history: readonly Day[] | undefined
+  date: string
+  budgets: Budgets
+  priceOf: (model: string) => Prices | undefined
+  fun: boolean
+  pack: Pack
+}): Advice {
+  const today = o.month.days.find(d => d.date === o.date)
+  const lastActive = today ?? o.month.days.filter(d => d.metrics.spend > 0).at(-1)
+  const list = [
+    ...tips(today, 0),
+    forecastTip(o.month.total.spend, o.date, o.budgets.monthly),
+    outputTip(lastActive, o.priceOf),
+    failedTip(lastActive),
+    o.history ? weekdayTip(o.history) : undefined,
+  ].filter((t): t is string => t !== undefined)
+  const seed = Number(o.date.slice(8))
+  let quest: string | null = null
+  if (o.budgets.daily > 0) {
+    const q = questFor(o.date)
+    const done = today ? q.done(today, o.budgets.daily) : false
+    const sofar = today ? tr(` · so far ${q.progress(today)} ${done ? '✅' : '❌'}`, ` · eddig ${q.progress(today)} ${done ? '✅' : '❌'}`) : ''
+    quest = tr(`🎯 Today's quest: ${q.text} (+${QUEST_XP} coins)${sofar}`, `🎯 Mai küldetés: ${q.text} (+${QUEST_XP} garas)${sofar}`)
+  }
+  return { tips: o.fun ? list.map((t, i) => voice(t, o.pack, seed + i)) : list, quest }
+}
+
 /** Every current savings tip and today's quest (the parts of Claude Code's advice that need no session). */
 export async function tipsText(c: Common & { priceOf: (model: string) => Prices | undefined; pack: Pack }): Promise<string> {
   const date = utcDate(Date.now())
@@ -39,25 +71,10 @@ export async function tipsText(c: Common & { priceOf: (model: string) => Prices 
     fetchActivity(fetchLite, c.conn, `${date.slice(0, 7)}-01`, date),
     fetchActivity(fetchLite, c.conn, addDays(date, -56), date).catch(() => undefined),
   ])
-  const today = month.days.find(d => d.date === date)
-  const lastActive = today ?? month.days.filter(d => d.metrics.spend > 0).at(-1)
-  const list = [
-    ...tips(today, 0),
-    forecastTip(month.total.spend, date, c.budgets.monthly),
-    outputTip(lastActive, c.priceOf),
-    failedTip(lastActive),
-    history ? weekdayTip(history.days) : undefined,
-  ].filter((t): t is string => t !== undefined)
-  const seed = Number(date.slice(8))
+  const advice = adviceFrom({ month, history: history?.days, date, budgets: c.budgets, priceOf: c.priceOf, fun: c.fun, pack: c.pack })
   const lines = [tr('🪙 Savings tips', '🪙 Megtakarítási tippek'), '']
-  if (list.length === 0) lines.push(tr('Nothing to flag right now. Carry on.', 'Most nincs mit szóvá tenni. Hajrá.'))
-  for (const [i, t] of list.entries()) lines.push(c.fun ? voice(t, c.pack, seed + i) : t, '')
-  if (c.budgets.daily > 0) {
-    const q = questFor(date)
-    const done = today ? q.done(today, c.budgets.daily) : false
-    const sofar = today ? tr(` · so far ${q.progress(today)} ${done ? '✅' : '❌'}`, ` · eddig ${q.progress(today)} ${done ? '✅' : '❌'}`) : ''
-    lines.push(tr(`🎯 Today's quest: ${q.text} (+${QUEST_XP} coins)${sofar}`, `🎯 Mai küldetés: ${q.text} (+${QUEST_XP} garas)${sofar}`))
-  }
+  if (advice.tips.length === 0) lines.push(tr('Nothing to flag right now. Carry on.', 'Most nincs mit szóvá tenni. Hajrá.'))
+  for (const t of advice.tips) lines.push(t, '')
+  if (advice.quest) lines.push(advice.quest)
   return lines.join('\n').trimEnd()
 }
-
