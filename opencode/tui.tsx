@@ -9,7 +9,11 @@ import {
   cacheStatus,
   cacheTtlMs,
   clearOrRewriteTip,
+  handoverMarkdown,
+  handoverTitle,
+  resumePrompt,
 } from '../hooks/advice'
+import type { Handover } from '../hooks/advice'
 import { inKind, money, ratios, SCOPE_NAMES, statusLine, utcDate } from '../hooks/format'
 import type { Budgets, Scope, Spend } from '../hooks/format'
 import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
@@ -19,6 +23,7 @@ import { fill, packById, pickLine, voice } from '../hooks/packs'
 import { balance, buy, owns, wear, worn } from '../hooks/xp'
 import type { Ledger } from '../hooks/xp'
 import { creditDays, loadLedger, saveLedger, shopItems, shopRow, xpText } from './ledger'
+import { listHandovers, rowsOf, writeHandover } from './restart'
 import { reportText, tipsText } from './report'
 import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked, trace } from './shared'
 
@@ -266,6 +271,59 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       }),
     )
   }
+  /** Start a fresh session whose prompt is pre-filled with the handover; Enter sends it. */
+  const continueFrom = async (h: Handover) => {
+    const res = await api.client.session.create({ body: { title: `🧳 ${handoverTitle(h.text) || h.id}` } })
+    const id = res.data?.id
+    if (!id) throw new Error('could not create a session')
+    api.route.navigate('session', { sessionID: id, prompt: { input: resumePrompt(h.id, h.text), parts: [] } })
+  }
+
+  /** `/frugal restart`: a small model writes the handover, then a new session starts from it. */
+  const restart = async (sonnetOnly: boolean, sid: string | undefined) => {
+    api.ui.dialog.setSize('medium')
+    const title = tr('🧳 Restart from a handover', '🧳 Újrakezdés átadással')
+    if (!sid) return void api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message: tr('Open a session first: there is no conversation to hand over.', 'Előbb nyiss egy sessiont: nincs mit átadni.'), onConfirm: () => api.ui.dialog.clear() }))
+    api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message: tr('Reading the conversation and writing the handover…', 'Beszélgetés olvasása, átadás írása…') }))
+    try {
+      const msgs = await api.client.session.messages({ path: { id: sid } })
+      const rows = rowsOf(msgs.data ?? [])
+      if (rows.length === 0) throw new Error(tr('there is no conversation to hand over yet', 'még nincs mit átadni'))
+      const w = await writeHandover({ conn, prices, rows, cwd: api.state.path.directory, sonnetOnly })
+      if ('error' in w) throw new Error(w.error)
+      await continueFrom(w.handover)
+      api.ui.dialog.clear()
+      api.ui.toast({ title: 'Frugalitas', message: tr(`🧳 Handover ${w.handover.id} by ${w.handover.model} (~${money(w.cost)}), saved to ${w.handover.path}. Press Enter to continue from it.`, `🧳 A(z) ${w.handover.id} átadást a ${w.handover.model} írta (~${money(w.cost)}), mentve: ${w.handover.path}. Enter: folytatás.`), variant: 'success', duration: 15_000 })
+    } catch (e: any) {
+      api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message: tr(`The handover could not be written (${String(e?.message ?? e)}); nothing was changed.`, `Nem sikerült az átadás (${String(e?.message ?? e)}); nem változtattam semmit.`), onConfirm: () => api.ui.dialog.clear() }))
+    }
+  }
+
+  /** The saved handovers: pick one to read it, then continue from it. */
+  const handovers = () => {
+    const all = listHandovers().slice(0, 30)
+    api.ui.dialog.setSize('large')
+    if (all.length === 0) return void api.ui.dialog.replace(() => api.ui.DialogAlert({ title: '🧳 Handovers', message: tr('No handovers yet. "Restart from a handover" writes one.', 'Még nincs átadás. Az "Újrakezdés átadással" ír egyet.'), onConfirm: () => api.ui.dialog.clear() }))
+    api.ui.dialog.replace(() =>
+      api.ui.DialogSelect({
+        title: tr('🧳 Handovers (newest first)', '🧳 Átadások (a legújabbak elöl)'),
+        options: all.map(h => ({ title: handoverTitle(h.text) || h.id, description: `${new Date(h.at).toISOString().replace('T', ' ').slice(0, 16)} · ${h.model.replace(/^.*\//, '')} · ${h.id}`, value: h.id })),
+        onSelect: o => {
+          const h = all.find(x => x.id === o.value)!
+          api.ui.dialog.setSize('xlarge')
+          api.ui.dialog.replace(() =>
+            api.ui.DialogConfirm({
+              title: `🧳 ${h.id}`,
+              message: `${h.path ? `${h.path}\n\n` : ''}${handoverMarkdown(h)}\n${tr('Enter: continue from it in a new session · Esc: close', 'Enter: folytatás új sessionben · Esc: bezár')}`,
+              onConfirm: () => void continueFrom(h).then(() => api.ui.dialog.clear()).catch(e => api.ui.toast({ title: 'Frugalitas', message: String(e?.message ?? e), variant: 'error' })),
+              onCancel: () => api.ui.dialog.clear(),
+            }),
+          )
+        },
+      }),
+    )
+  }
+
   const menu = () => {
     const sid = api.route.current.name === 'session' ? String((api.route.current as any).params?.sessionID ?? '') : undefined
     const entries: { title: string; description: string; run: () => void }[] = [
@@ -275,6 +333,9 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       { title: tr('Tips and quest', 'Tippek és küldetés'), description: tr('savings tips, today\'s quest', 'megtakarítási tippek, mai küldetés'), run: () => void show('Frugalitas', () => tipsText({ ...common(sid), priceOf, pack: pack() })) },
       { title: tr('Coins and rank', 'Garas és rang'), description: tr('what thrift has earned', 'amit a spórolás hozott'), run: () => void show('Frugalitas', async () => (budgets.daily > 0 ? xpText(ledger(), budgets.daily) : tr('Coins need a daily budget (dailyBudget in frugalitas.json).', 'Garashoz napi keret kell (dailyBudget a frugalitas.json-ban).'))) },
       { title: tr('Shop', 'Bolt'), description: tr('message packs: buy or wear', 'üzenet-packek: vásárlás, viselés'), run: () => shop() },
+      { title: tr('Restart from a handover', 'Újrakezdés átadással'), description: tr('a small model summarises, a new session continues', 'kis modell összefoglal, új session folytatja'), run: () => void restart(false, sid) },
+      { title: tr('Restart (Sonnet writes it)', 'Újrakezdés (Sonnet írja)'), description: tr('for conversations too big for Haiku', 'Haikunak túl nagy beszélgetésekhez'), run: () => void restart(true, sid) },
+      { title: tr('Handovers', 'Átadások'), description: tr('read or continue from a saved one', 'mentett megnyitása vagy folytatása'), run: () => handovers() },
       { title: tr('Refresh numbers', 'Számok frissítése'), description: tr('re-read today and month from LiteLLM', 'ma és hó újraolvasása'), run: () => void refresh().then(() => api.ui.toast({ title: 'Frugalitas', message: `today ${money(today() ?? 0)} · month ${money(month() ?? 0)}`, variant: 'info' })) },
     ]
     api.ui.dialog.setSize('medium')
