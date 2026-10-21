@@ -72,6 +72,8 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const hufRate = num('hufRate', 350)
   const isFun = options.fun !== false
   // The sidebar mascot: 'small' (12×11 cells, default), 'large' (24×22) or 'off'.
+  // The card behind it: a color (`#rrggbb`), or 'none' for the sidebar's own background.
+  const mascotBackdrop = options.mascotBackdrop === 'none' ? undefined : typeof options.mascotBackdrop === 'string' ? options.mascotBackdrop : '#59606e'
   const mascotScale: 1 | 2 | 0 = options.mascot === 'off' || !isFun ? 0 : options.mascot === 'large' ? 1 : 2
   setMode(asMode(options.mode) ?? 'frugalitas')
   const cacheTtl = cacheTtlMs(options.promptCacheTtl ?? process.env.CLAUDE_CODE_PROMPT_CACHE_TTL)
@@ -529,7 +531,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
             <text fg={theme.text}>
               <b>{tr('Frugalitas', 'Fukarléc')}</b>
             </text>
-            {mascotScale ? <Mascot skin={skinById(worn(ledger()).skin)} ratio={worst(spendOf(props.session_id), budgets)?.ratio} scale={mascotScale} /> : null}
+            {mascotScale ? <Mascot skin={skinById(worn(ledger()).skin)} ratio={worst(spendOf(props.session_id), budgets)?.ratio} scale={mascotScale} backdrop={mascotBackdrop} /> : null}
             {budgetRows(props.session_id, theme)}
             {cache ? <text fg={theme.textMuted}>{cache}</text> : null}
             <text fg={theme.textMuted}>{`${r.emoji} ${r.name} · ${balance(ledger())} ${tr('coins', 'garas')}`}</text>

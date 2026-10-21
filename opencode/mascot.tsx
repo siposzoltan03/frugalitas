@@ -22,7 +22,7 @@ function pixelColors(skin: Skin, mood: MascotMood): (string | undefined)[][] {
 export function mascotCells(skin: Skin, mood: MascotMood, scale: 1 | 2): Cell[][] {
   const px = pixelColors(skin, mood)
   const w = px[0]?.length ?? 0
-  /** One logical pixel: the most common opaque color among the `scale`×`scale` block, if at least half are opaque. */
+  /** One logical pixel: the most common opaque color among the `scale`×`scale` block. */
   const at = (x: number, y: number): string | undefined => {
     const seen = new Map<string, number>()
     let opaque = 0
@@ -35,7 +35,7 @@ export function mascotCells(skin: Skin, mood: MascotMood, scale: 1 | 2): Cell[][
         }
       }
     }
-    if (opaque * 2 < scale * scale) return undefined
+    if (opaque === 0) return undefined // any opaque pixel counts: thin parts (cane, hat brim, glasses) must survive the merge
     return [...seen].sort((a, b) => b[1] - a[1])[0]![0]
   }
   const rows: Cell[][] = []
@@ -54,10 +54,11 @@ export function mascotCells(skin: Skin, mood: MascotMood, scale: 1 | 2): Cell[][
   return rows
 }
 
-export function Mascot(props: { skin: Skin; ratio: number | undefined; scale: 1 | 2 }) {
+export function Mascot(props: { skin: Skin; ratio: number | undefined; scale: 1 | 2; backdrop: string | undefined }) {
   const rows = () => mascotCells(props.skin, mascotMood(props.ratio), props.scale)
   return (
-    <box flexDirection="column">
+    // The sprite is mostly dark (coats, hats): a lighter card behind it keeps it from sinking into the sidebar.
+    <box flexDirection="column" {...(props.backdrop ? { backgroundColor: props.backdrop } : {})}>
       {rows().map(row => (
         <text>
           {row.map(c => (
