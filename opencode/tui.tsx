@@ -16,6 +16,9 @@ import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
 import type { Prices } from '../hooks/litellm'
 import { asMode, setMode, tr } from '../hooks/mode'
 import { fill, packById, pickLine, voice } from '../hooks/packs'
+import { balance, buy, owns, wear, worn } from '../hooks/xp'
+import type { Ledger } from '../hooks/xp'
+import { creditDays, loadLedger, saveLedger, shopItems, shopRow, xpText } from './ledger'
 import { reportText, tipsText } from './report'
 import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked, trace } from './shared'
 
@@ -58,7 +61,8 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const isFun = options.fun !== false
   setMode(asMode(options.mode) ?? 'frugalitas')
   const cacheTtl = cacheTtlMs(options.promptCacheTtl ?? process.env.CLAUDE_CODE_PROMPT_CACHE_TTL)
-  const pack = () => packById(undefined)
+  const [ledger, setLedger] = createSignal<Ledger>(loadLedger(utcDate(Date.now())))
+  const pack = () => packById(worn(ledger()).pack)
   const say = (lines: readonly string[], vars: Record<string, string | number>, seed: number) => fill(pickLine(lines, seed), vars)
 
   let prices: Record<string, Prices> = {}
@@ -103,6 +107,25 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     }
   }
 
+  /** Once per UTC day: pay out the closed days since the last credit, and say so. */
+  let creditedOn = ''
+  const creditToday = async (d: string) => {
+    if (creditedOn === d) return
+    creditedOn = d
+    try {
+      const r = await creditDays(conn, ledger(), d, budgets.daily)
+      if (r.gained === 0) return
+      saveLedger(r.ledger)
+      setLedger(r.ledger)
+      const quests = r.quests > 0 ? tr(` 🎯 (${r.quests} quest${r.quests > 1 ? 's' : ''})`, ` 🎯 (${r.quests} küldetés)`) : ''
+      const message = (isFun ? say(pack().xp, { xp: r.gained }, Date.now()) : tr(`frugal: +${r.gained} coins`, `fukarléc: +${r.gained} XP`)) + quests
+      api.ui.toast({ title: 'Frugalitas', message, variant: 'success', duration: 10_000 })
+    } catch (e: any) {
+      creditedOn = '' // try again at the next refresh
+      trace(`credit failed: ${e?.message ?? e}`)
+    }
+  }
+
   const refresh = async () => {
     try {
       const t = Date.now()
@@ -113,6 +136,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       setToday(a.days.find(x => x.date === d)?.metrics.spend ?? 0)
       setErr(undefined)
       for (const sid of Object.keys(sessions())) checkBudgets(sid)
+      void creditToday(d)
     } catch (e: any) {
       setErr(String(e?.message ?? e).slice(0, 60))
     }
@@ -223,6 +247,25 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message, onConfirm: () => api.ui.dialog.clear() }))
   }
   const common = (sid?: string) => ({ conn, budgets, spend: spendOf(sid ?? ''), fun: isFun, hufRate })
+  /** Message packs for coins; picking one buys it (when owned: wears it). */
+  const shop = (note?: string) => {
+    const l = ledger()
+    api.ui.dialog.setSize('large')
+    api.ui.dialog.replace(() =>
+      api.ui.DialogSelect({
+        title: tr(`🛒 Shop · ${balance(l)} coins${note ? ` · ${note}` : ''}`, `🛒 Bolt · ${balance(l)} garas${note ? ` · ${note}` : ''}`),
+        options: shopItems().map(i => ({ ...shopRow(l, i), value: i.id })),
+        onSelect: o => {
+          const item = shopItems().find(i => i.id === o.value)!
+          const result = owns(l, item) ? wear(l, item) : buy(l, item)
+          if ('error' in result) return shop(result.error)
+          saveLedger(result.ledger)
+          setLedger(result.ledger)
+          shop(owns(l, item) ? tr(`now using ${item.name}`, `felvéve: ${item.name}`) : tr(`bought ${item.name}`, `megvetted: ${item.name}`))
+        },
+      }),
+    )
+  }
   const menu = () => {
     const sid = api.route.current.name === 'session' ? String((api.route.current as any).params?.sessionID ?? '') : undefined
     const entries: { title: string; description: string; run: () => void }[] = [
@@ -230,6 +273,8 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       { title: tr('Last 7 days', 'Utolsó 7 nap'), description: '', run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 7 })) },
       { title: tr('Last 30 days', 'Utolsó 30 nap'), description: '', run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 30 })) },
       { title: tr('Tips and quest', 'Tippek és küldetés'), description: tr('savings tips, today\'s quest', 'megtakarítási tippek, mai küldetés'), run: () => void show('Frugalitas', () => tipsText({ ...common(sid), priceOf, pack: pack() })) },
+      { title: tr('Coins and rank', 'Garas és rang'), description: tr('what thrift has earned', 'amit a spórolás hozott'), run: () => void show('Frugalitas', async () => (budgets.daily > 0 ? xpText(ledger(), budgets.daily) : tr('Coins need a daily budget (dailyBudget in frugalitas.json).', 'Garashoz napi keret kell (dailyBudget a frugalitas.json-ban).'))) },
+      { title: tr('Shop', 'Bolt'), description: tr('message packs: buy or wear', 'üzenet-packek: vásárlás, viselés'), run: () => shop() },
       { title: tr('Refresh numbers', 'Számok frissítése'), description: tr('re-read today and month from LiteLLM', 'ma és hó újraolvasása'), run: () => void refresh().then(() => api.ui.toast({ title: 'Frugalitas', message: `today ${money(today() ?? 0)} · month ${money(month() ?? 0)}`, variant: 'info' })) },
     ]
     api.ui.dialog.setSize('medium')
