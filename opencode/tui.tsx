@@ -194,31 +194,39 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     checkBudgets(rootOf(m.sessionID))
   })
 
-  /** A session opened before the plugin started (or resumed) has history the events never told us about. */
+  /**
+   * A session opened before the plugin started (or resumed) has history the events never told us about. The TUI
+   * loads a session's messages a moment after it opens, so this retries (once a second, from the timer) until
+   * there are some.
+   */
   const backfilled = new Set<string>()
+  const wanted = new Map<string, number>() // session -> attempts so far
   const backfill = async (sid: string) => {
     if (backfilled.has(sid)) return
-    backfilled.add(sid)
+    wanted.set(sid, (wanted.get(sid) ?? 0) + 1)
     try {
-      const ids = [sid, ...((await api.client.session.children({ path: { id: sid } })).data ?? []).map(c => c.id)]
+      const children = ((await api.client.session.children({ path: { id: sid } })).data ?? []).map(c => c.id)
       let seen = 0
       let counted = 0
       const skipped = new Set<string>()
-      for (const id of ids) {
-        const res = await api.client.session.messages({ path: { id } })
-        for (const { info } of res.data ?? []) {
+      for (const id of [sid, ...children]) {
+        const loaded = api.state.session.messages(id)
+        const list = loaded.length > 0 ? loaded : ((await api.client.session.messages({ path: { id } })).data ?? []).map(x => x.info)
+        for (const info of list) {
           seen++
           if (account(info)) counted++
           else if ((info as any).role === 'assistant') skipped.add(`${(info as any).providerID}/${(info as any).modelID}`)
         }
       }
-      trace(`backfill ${sid}: ${ids.length} session(s), ${seen} messages, ${counted} priced, cost ${sess(sid).cost.toFixed(2)}, prices ${Object.keys(prices).length}, skipped ${[...skipped].join(',') || 'none'}`)
+      if (seen === 0) return // not loaded yet: the timer tries again
+      backfilled.add(sid)
+      wanted.delete(sid)
       const s = sess(sid)
       s.turnBase = s.cost // history is not a turn: no expensive-turn toast for it
       touch()
       checkBudgets(sid)
+      trace(`backfill ${sid}: ${1 + children.length} session(s), ${seen} messages, ${counted} priced, cost ${s.cost.toFixed(2)}, skipped ${[...skipped].join(',') || 'none'}`)
     } catch (e: any) {
-      backfilled.delete(sid)
       trace(`backfill failed: ${e?.message ?? e}`)
     }
   }
@@ -254,6 +262,10 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const timer = setInterval(() => {
     const t = Date.now()
     setNow(t)
+    for (const [sid, attempts] of wanted) {
+      if (attempts >= 30) wanted.delete(sid)
+      else void backfill(sid)
+    }
     const blocked = readBlocked()
     if (blocked && blocked.at > blockedSeen) {
       blockedSeen = blocked.at
