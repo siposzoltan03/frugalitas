@@ -7,16 +7,11 @@ import type { Budgets, Scope } from '../hooks/format'
 import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
 import type { Prices } from '../hooks/litellm'
 import { asMode, setMode, tr } from '../hooks/mode'
-import { connFromConfig, fetchLite, isAllowed, noteBlocked, PROVIDER } from './shared'
+import { connFromConfig, fetchLite, isAllowed, loadOptions, noteBlocked, numOption, PROVIDER } from './shared'
 
 const SPEND_TTL_MS = 60_000
 
-const server: Plugin = async ({ client }, options) => {
-  if (options?.overBudget !== 'block') return {} // warn mode: the TUI plugin's toasts are all there is
-  const num = (key: string, fallback: number) => (options?.[key] !== undefined && Number.isFinite(Number(options[key])) ? Number(options[key]) : fallback)
-  const budgets: Budgets = { session: num('sessionBudget', 20), daily: num('dailyBudget', 60), monthly: num('monthlyBudget', 800) }
-  setMode(asMode(options?.mode) ?? 'frugalitas')
-
+const server: Plugin = async ({ client }, entryOptions) => {
   let cfg: any
   let prices: Record<string, Prices> | undefined
   let period: { at: number; today: number; month: number } | undefined
@@ -27,7 +22,12 @@ const server: Plugin = async ({ client }, options) => {
     },
 
     'chat.message': async (input, _output) => {
-      if (input.model?.providerID !== PROVIDER || isAllowed()) return
+      // Read per prompt, so editing frugalitas.json takes effect without a restart.
+      const options = loadOptions(entryOptions)
+      if (options.overBudget !== 'block' || input.model?.providerID !== PROVIDER || isAllowed()) return
+      const num = (key: string, fallback: number) => numOption(options, key, fallback)
+      const budgets: Budgets = { session: num('sessionBudget', 20), daily: num('dailyBudget', 60), monthly: num('monthlyBudget', 800) }
+      setMode(asMode(options.mode) ?? 'frugalitas')
       const conn = connFromConfig(cfg)
       if (!conn) return
 

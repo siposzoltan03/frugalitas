@@ -68,3 +68,26 @@ export function readBlocked(): { at: number; message: string } | undefined {
     return undefined
   }
 }
+
+/**
+ * One options file for both entry points: `~/.config/opencode/frugalitas.json`, with the plugin entry's own
+ * options (in tui.json / opencode.jsonc) on top of it. Missing or broken file = entry options only.
+ */
+const OPTIONS_FILE = join(homedir(), '.config', 'opencode', 'frugalitas.json')
+
+export type Options = Record<string, unknown>
+
+export function loadOptions(entry?: Options): Options {
+  let file: Options = {}
+  try {
+    const parsed = JSON.parse(readFileSync(OPTIONS_FILE, 'utf8'))
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) file = parsed
+  } catch {}
+  return { ...file, ...entry }
+}
+
+/** A numeric option, or the fallback when it is missing or not a number. */
+export function numOption(options: Options, key: string, fallback: number): number {
+  const v = options[key]
+  return v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : fallback
+}

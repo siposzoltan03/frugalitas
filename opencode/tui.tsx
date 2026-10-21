@@ -16,7 +16,7 @@ import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
 import type { Prices } from '../hooks/litellm'
 import { asMode, setMode, tr } from '../hooks/mode'
 import { fill, packById, pickLine, voice } from '../hooks/packs'
-import { allowToday, connFromConfig, fetchLite, PROVIDER, readBlocked } from './shared'
+import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked } from './shared'
 
 /** Per-session bookkeeping; the Claude Code plugin keeps the same things in plain variables. */
 type Sess = {
@@ -32,17 +32,18 @@ type Sess = {
   expiredFor: number
 }
 
-const tui: TuiPlugin = async (api, options) => {
+const tui: TuiPlugin = async (api, entryOptions) => {
+  const options = loadOptions(entryOptions)
   const conn = connFromConfig(api.state.config)
   if (!conn) return // not a LiteLLM setup: stay silent, like the Claude Code plugin
 
-  const num = (key: string, fallback: number) => (Number.isFinite(Number(options?.[key])) && options?.[key] !== undefined ? Number(options[key]) : fallback)
+  const num = (key: string, fallback: number) => numOption(options, key, fallback)
   const budgets: Budgets = { session: num('sessionBudget', 20), daily: num('dailyBudget', 60), monthly: num('monthlyBudget', 800) }
   const expensiveTurn = num('expensiveTurn', 1)
   const hufRate = num('hufRate', 350)
-  const isFun = options?.fun !== false
-  setMode(asMode(options?.mode) ?? 'frugalitas')
-  const cacheTtl = cacheTtlMs(options?.promptCacheTtl ?? process.env.CLAUDE_CODE_PROMPT_CACHE_TTL)
+  const isFun = options.fun !== false
+  setMode(asMode(options.mode) ?? 'frugalitas')
+  const cacheTtl = cacheTtlMs(options.promptCacheTtl ?? process.env.CLAUDE_CODE_PROMPT_CACHE_TTL)
   const pack = () => packById(undefined)
   const say = (lines: readonly string[], vars: Record<string, string | number>, seed: number) => fill(pickLine(lines, seed), vars)
 

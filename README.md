@@ -179,19 +179,26 @@ What works: the status line next to the prompt (session, today, month, mood, cac
 toasts, the expensive-turn toast, the cache warnings and keep/compact/clear advice, `/frugal` (today and month in a
 toast), and the `block` mode. Not yet: the full report, `restart`, the dashboard, coins and the shop.
 
-Two entry points, because opencode keeps TUI and server plugins apart. Give both the same options:
+Two entry points, because opencode keeps TUI and server plugins apart. Both read one options file,
+`~/.config/opencode/frugalitas.json` (options given on a plugin entry override it):
+
+```json
+{ "overBudget": "warn", "sessionBudget": 10, "dailyBudget": 25, "monthlyBudget": 500 }
+```
 
 `~/.config/opencode/tui.json`:
 
 ```json
-{ "plugin": [["/path/to/frugalitas/opencode/tui.tsx", { "sessionBudget": 10, "dailyBudget": 25, "monthlyBudget": 500 }]] }
+{ "plugin": ["/path/to/frugalitas/opencode/tui.tsx"] }
 ```
 
 `~/.config/opencode/opencode.jsonc` (the budget guard; put it in the global config, not a workspace one that gets regenerated):
 
 ```jsonc
-"plugin": [["/path/to/frugalitas/opencode/server.ts", { "overBudget": "warn", "sessionBudget": 10, "dailyBudget": 25, "monthlyBudget": 500 }]]
+"plugin": ["/path/to/frugalitas/opencode/server.ts"]
 ```
+
+The guard re-reads the file on every prompt; the TUI plugin reads it at startup.
 
 Options: `sessionBudget`, `dailyBudget`, `monthlyBudget`, `overBudget` (`warn`/`block`), `expensiveTurn`, `fun`, `mode`,
 `hufRate`, `promptCacheTtl`. With `overBudget: "block"` a prompt over budget is refused; opencode only shows "Failed to
