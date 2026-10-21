@@ -1,5 +1,5 @@
 // Pieces both opencode entry points (tui.tsx, server.ts) need.
-import { readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -90,4 +90,11 @@ export function loadOptions(entry?: Options): Options {
 export function numOption(options: Options, key: string, fallback: number): number {
   const v = options[key]
   return v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : fallback
+}
+
+/** opencode logs nothing about a TUI plugin that stops early: leave a trace in ~/.config/opencode/frugalitas-debug.log. */
+export function trace(message: string): void {
+  try {
+    appendFileSync(join(homedir(), '.config', 'opencode', 'frugalitas-debug.log'), `${new Date().toISOString()} ${message}\n`)
+  } catch {}
 }

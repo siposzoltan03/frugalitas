@@ -16,7 +16,9 @@ import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
 import type { Prices } from '../hooks/litellm'
 import { asMode, setMode, tr } from '../hooks/mode'
 import { fill, packById, pickLine, voice } from '../hooks/packs'
-import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked } from './shared'
+import { allowToday, connFromConfig, fetchLite, loadOptions, numOption, PROVIDER, readBlocked, trace } from './shared'
+
+const POLL_MS = 5 * 60_000
 
 /** Per-session bookkeeping; the Claude Code plugin keeps the same things in plain variables. */
 type Sess = {
@@ -33,9 +35,20 @@ type Sess = {
 }
 
 const tui: TuiPlugin = async (api, entryOptions) => {
+  trace('tui plugin start')
+  try {
+    await run(api, entryOptions)
+    trace('tui plugin ready')
+  } catch (e: any) {
+    trace(`tui plugin failed: ${e?.stack ?? e}`)
+    throw e
+  }
+}
+
+const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPlugin>[1]) => {
   const options = loadOptions(entryOptions)
   const conn = connFromConfig(api.state.config)
-  if (!conn) return // not a LiteLLM setup: stay silent, like the Claude Code plugin
+  if (!conn) return trace(`no litellm connection: providers in config = ${Object.keys((api.state.config as any)?.provider ?? {}).join(',') || 'none'}`) // not a LiteLLM setup: stay silent, like the Claude Code plugin
 
   const num = (key: string, fallback: number) => numOption(options, key, fallback)
   const budgets: Budgets = { session: num('sessionBudget', 20), daily: num('dailyBudget', 60), monthly: num('monthlyBudget', 800) }
@@ -196,9 +209,14 @@ const tui: TuiPlugin = async (api, entryOptions) => {
       ? `🪙 ⚠︎ ${err()}`
       : statusLine(spendOf(sid), budgets, isFun, err() !== undefined) + cacheSuffix(sid)
 
+  const rendered = new Set<string>()
   api.slots.register({
     slots: {
       session_prompt_right(_ctx, props) {
+        if (!rendered.has(props.session_id)) {
+          rendered.add(props.session_id)
+          trace(`slot render ${props.session_id}`)
+        }
         return <text>{line(props.session_id)}</text>
       },
     },
