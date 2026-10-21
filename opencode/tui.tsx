@@ -201,7 +201,18 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     backfilled.add(sid)
     try {
       const ids = [sid, ...((await api.client.session.children({ path: { id: sid } })).data ?? []).map(c => c.id)]
-      for (const id of ids) for (const { info } of (await api.client.session.messages({ path: { id } })).data ?? []) account(info)
+      let seen = 0
+      let counted = 0
+      const skipped = new Set<string>()
+      for (const id of ids) {
+        const res = await api.client.session.messages({ path: { id } })
+        for (const { info } of res.data ?? []) {
+          seen++
+          if (account(info)) counted++
+          else if ((info as any).role === 'assistant') skipped.add(`${(info as any).providerID}/${(info as any).modelID}`)
+        }
+      }
+      trace(`backfill ${sid}: ${ids.length} session(s), ${seen} messages, ${counted} priced, cost ${sess(sid).cost.toFixed(2)}, prices ${Object.keys(prices).length}, skipped ${[...skipped].join(',') || 'none'}`)
       const s = sess(sid)
       s.turnBase = s.cost // history is not a turn: no expensive-turn toast for it
       touch()
