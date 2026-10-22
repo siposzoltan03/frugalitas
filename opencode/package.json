@@ -1,0 +1,21 @@
+{
+  "name": "frugalitas-opencode",
+  "private": true,
+  "type": "module",
+  "description": "Frugalitas for opencode: the TUI and server plugins. Not published; only here for the type-check and tests.",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.18.1",
+    "@opencode-ai/sdk": "1.18.1",
+    "@opentui/core": "*",
+    "@opentui/keymap": "*",
+    "@opentui/solid": "*",
+    "@types/node": "^22",
+    "solid-js": "*",
+    "tsx": "^4.23.15",
+    "typescript": "5.6.3"
+  }
+}

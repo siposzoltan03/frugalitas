@@ -63,7 +63,7 @@ export function xpText(l: Ledger, dailyBudget: number): string {
 }
 
 /** One shop row's title, price and state for the picker. */
-export function shopRow(l: Ledger, i: ShopItem): { title: string; footer: string; description: string } {
+export function shopRow(l: Ledger, i: ShopItem): { title: string; footer: string; description: string; category: string } {
   const wearing = i.kind === 'skin' ? worn(l).skin === i.id : worn(l).pack === i.id
   const mark = wearing ? '👉' : owns(l, i) ? '✅' : '🔒'
   const price = i.price === 0 ? tr('free', 'ingyen') : tr(`${i.price} coins`, `${i.price} garas`)

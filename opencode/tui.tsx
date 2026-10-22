@@ -224,13 +224,13 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     if (backfilled.has(sid)) return
     wanted.set(sid, (wanted.get(sid) ?? 0) + 1)
     try {
-      const children = ((await api.client.session.children({ path: { id: sid } })).data ?? []).map(c => c.id)
+      const children = ((await api.client.session.children({ sessionID: sid })).data ?? []).map(c => c.id)
       let seen = 0
       let counted = 0
       const skipped = new Set<string>()
       for (const id of [sid, ...children]) {
         const loaded = api.state.session.messages(id)
-        const list = loaded.length > 0 ? loaded : ((await api.client.session.messages({ path: { id } })).data ?? []).map(x => x.info)
+        const list = loaded.length > 0 ? loaded : ((await api.client.session.messages({ sessionID: id, limit: 10_000 })).data ?? []).map(x => x.info)
         for (const info of list) {
           seen++
           if (account(info)) counted++
@@ -362,7 +362,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   }
   /** Start a fresh session whose prompt is pre-filled with the handover; Enter sends it. */
   const continueFrom = async (h: Handover) => {
-    const res = await api.client.session.create({ body: { title: `🧳 ${handoverTitle(h.text) || h.id}` } })
+    const res = await api.client.session.create({ title: `🧳 ${handoverTitle(h.text) || h.id}` })
     const id = res.data?.id
     if (!id) throw new Error('could not create a session')
     api.route.navigate('session', { sessionID: id, prompt: { input: resumePrompt(h.id, h.text), parts: [] } })
@@ -375,8 +375,10 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     if (!sid) return void api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message: tr('Open a session first: there is no conversation to hand over.', 'Előbb nyiss egy sessiont: nincs mit átadni.'), onConfirm: () => api.ui.dialog.clear() }))
     api.ui.dialog.replace(() => api.ui.DialogAlert({ title, message: tr('Reading the conversation and writing the handover…', 'Beszélgetés olvasása, átadás írása…') }))
     try {
-      const msgs = await api.client.session.messages({ path: { id: sid } })
-      const rows = rowsOf(msgs.data ?? [])
+      // What the TUI has loaded for the open session (messages and their parts); the history call is the fallback.
+      const loaded = api.state.session.messages(sid).map(info => ({ info, parts: api.state.part(info.id) }))
+      const msgs = loaded.length > 0 ? loaded : ((await api.client.session.messages({ sessionID: sid, limit: 10_000 })).data ?? [])
+      const rows = rowsOf(msgs)
       if (rows.length === 0) throw new Error(tr('there is no conversation to hand over yet', 'még nincs mit átadni'))
       const w = await writeHandover({ conn, prices, rows, cwd: api.state.path.directory, sonnetOnly })
       if ('error' in w) throw new Error(w.error)

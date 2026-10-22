@@ -207,7 +207,14 @@ Options: `sessionBudget`, `dailyBudget`, `monthlyBudget`, `overBudget` (`warn`/`
 `hufRate`, `promptCacheTtl`. With `overBudget: "block"` a prompt over budget is refused; opencode only shows "Failed to
 send prompt", so the reason comes as a toast. `/frugal-allow` (palette) lifts the block for the UTC day.
 
-## Settings
+## Developing the opencode port
+
+```
+cd opencode && npm install
+npm run typecheck   # tsc against opencode's plugin, SDK and OpenTUI types
+npm test            # node:test through tsx: options, connection, mascot cells, transcript rows, advice, shop
+```
+
 
 `/config` → frugalitas: session, daily and monthly budgets (USD, 0 = none), `warn`/`block` mode, the expensive-turn
 threshold, and fun mode.
