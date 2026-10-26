@@ -15,19 +15,22 @@ import {
   pickSummaryModel,
   restartViaSummaryCost,
   handoverMarkdown,
+  MIN_CONTEXT_TOKENS,
+  parallelUseTip,
   handoverTitle,
   resumePrompt,
 } from '../hooks/advice'
 import type { Handover } from '../hooks/advice'
 import { addDays, inKind, money, ratios, SCOPE_NAMES, statusLine, utcDate } from '../hooks/format'
 import type { Budgets, Scope, Spend } from '../hooks/format'
-import { fetchActivity, fetchPrices, priceFor } from '../hooks/litellm'
+import { fetchActivity, fetchKeySpend, fetchPrices, priceFor } from '../hooks/litellm'
 import type { Day, Prices } from '../hooks/litellm'
 import { asMode, mode, setMode, tr } from '../hooks/mode'
 import { fill, packById, pickLine, voice } from '../hooks/packs'
+import { homedir } from 'node:os'
 import { balance, buy, earned, owns, progressBar, rankOf, wear, worn } from '../hooks/xp'
 import type { Ledger } from '../hooks/xp'
-import { creditDays, loadLedger, saveLedger, shopItems, shopRow, xpText } from './ledger'
+import { creditDays, findClaudeStores, importLedger, loadLedger, saveLedger, shopItems, shopRow, xpText } from './ledger'
 import { listHandovers, rowsOf, writeHandover } from './restart'
 import { mascotMood } from '../hooks/mascot'
 import { Mascot } from './mascot'
@@ -70,6 +73,8 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const num = (key: string, fallback: number) => numOption(options, key, fallback)
   const budgets: Budgets = { session: num('sessionBudget', 20), daily: num('dailyBudget', 60), monthly: num('monthlyBudget', 800) }
   const expensiveTurn = num('expensiveTurn', 1)
+  // Below this many tokens of context a cache rewrite is too cheap to advise about.
+  const minContext = num('adviceMinContext', MIN_CONTEXT_TOKENS)
   const hufRate = num('hufRate', 350)
   const isFun = options.fun !== false
   // The sidebar mascot: 'small' (12×11 cells, default), 'large' (24×22) or 'off'.
@@ -89,6 +94,8 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const [date, setDate] = createSignal(utcDate(Date.now()))
   const [err, setErr] = createSignal<string | undefined>()
   const [advice, setAdvice] = createSignal<Advice | undefined>()
+  let keyBase: number | undefined // the key's lifetime spend when this opencode started, for the parallel-use tip
+  let keyNow = 0
   let history: Day[] | undefined // ~8 weeks, fetched once a day for the weekday tip
   let historyOn = ''
   const [now, setNow] = createSignal(Date.now())
@@ -148,6 +155,10 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     }
   }
 
+  /** What this opencode priced live (not history), against what the key spent meanwhile: the rest was someone else. */
+  const liveCost = new Map<string, number>()
+  const parallelTip = () => parallelUseTip([...liveCost.values()].reduce((n, c) => n + c, 0), Math.max(0, keyNow - (keyBase ?? keyNow)))
+
   const refresh = async () => {
     try {
       const t = Date.now()
@@ -161,7 +172,9 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
         history = (await fetchActivity(fetchLite, conn, addDays(d, -56), d).catch(() => undefined))?.days
         historyOn = d
       }
-      setAdvice(adviceFrom({ month: a, history, date: d, budgets, priceOf, fun: isFun, pack: pack() }))
+      keyNow = await fetchKeySpend(fetchLite, conn).catch(() => keyNow)
+      keyBase ??= keyNow
+      setAdvice(adviceFrom({ month: a, history, date: d, budgets, priceOf, fun: isFun, pack: pack(), extra: [parallelTip()] }))
       for (const sid of Object.keys(sessions())) checkBudgets(sid)
       void creditToday(d)
     } catch (e: any) {
@@ -187,13 +200,15 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     return id
   }
   /** Prices one assistant message into its root session; false when it isn't ours or has no price. */
-  const account = (m: any): boolean => {
+  const account = (m: any, live = false): boolean => {
     if (m.role !== 'assistant' || m.providerID !== PROVIDER) return false
     const p = priceOf(m.modelID)
     if (!p) return false
     const t = m.tokens
     const root = rootOf(m.sessionID)
-    priced.set(m.id, { sid: root, cost: t.input * p.input + t.output * p.output + t.cache.read * p.cacheRead + t.cache.write * p.cacheWrite })
+    const cost = t.input * p.input + t.output * p.output + t.cache.read * p.cacheRead + t.cache.write * p.cacheWrite
+    priced.set(m.id, { sid: root, cost })
+    if (live) liveCost.set(m.id, cost)
     const s = sess(root)
     s.cost = 0
     for (const v of priced.values()) if (v.sid === root) s.cost += v.cost
@@ -207,7 +222,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   }
   const off = api.event.on('message.updated', ev => {
     const m = ev.properties.info
-    if (!account(m)) return
+    if (!account(m, true)) return
     if (m.role === 'assistant' && m.time.completed) void refresh()
     touch()
     checkBudgets(rootOf(m.sessionID))
@@ -275,6 +290,10 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const localize = (text: string) =>
     text.replace(/\/(?:frugal|fukarlec) restart/g, tr('/frugal → Restart', '/frugal → Újrakezdés')).replace(/\/clear\b/g, '/new')
 
+  /** The keep / compact / restart / clear comparison for a session whose cache has expired. */
+  const expiredTip = (s: Sess): string | undefined =>
+    clearOrRewriteTip(s.ctx, s.baseCtx, priceOf(s.model), estimateRestart(s.ctx, s.baseCtx, s.model), minContext)
+
   /** Once a second: move the countdown, warn ~30 s before a big context's cache expires, advise at expiry. */
   let blockedSeen = Date.now()
   const timer = setInterval(() => {
@@ -293,7 +312,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       if (s.warmSince === 0 || busy(sid)) continue
       const remaining = s.warmSince + cacheTtl - t
       if (s.soonFor !== s.warmSince) {
-        const warning = cacheSoonWarning(remaining, s.ctx, priceOf(s.model))
+        const warning = cacheSoonWarning(remaining, s.ctx, priceOf(s.model), minContext)
         if (warning) {
           s.soonFor = s.warmSince
           const message = localize(isFun ? voice(warning, pack(), t) : warning)
@@ -303,7 +322,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
       }
       if (remaining <= 0 && s.expiredFor !== s.warmSince) {
         s.expiredFor = s.warmSince
-        const tip = clearOrRewriteTip(s.ctx, s.baseCtx, priceOf(s.model), estimateRestart(s.ctx, s.baseCtx, s.model))
+        const tip = expiredTip(s)
         if (tip) api.ui.toast({ title: 'Frugalitas', message: localize(isFun ? voice(tip, pack(), t) : tip), variant: 'info', duration: 20_000 })
       }
     }
@@ -433,19 +452,47 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   /** The open session's id, if a session is on screen. */
   const currentSession = (): string | undefined => (api.route.current.name === 'session' ? String((api.route.current as any).params?.sessionID ?? '') || undefined : undefined)
 
+  /** Advice that needs this session or this process: the cache-expired comparison and the parallel-use tip. */
+  const tipExtras = (sid: string | undefined): (string | undefined)[] => {
+    const s = sid ? sessions()[sid] : undefined
+    const expired = s && s.warmSince > 0 && !busy(sid!) && now() > s.warmSince + cacheTtl
+    return [expired ? expiredTip(s) : undefined, parallelTip()].map(x => x && localize(x))
+  }
+
+  /** Fold the Claude Code plugin's coins and purchases into this ledger (safe to repeat). */
+  const importCoins = () => {
+    const stores = findClaudeStores(date())
+    api.ui.dialog.setSize('large')
+    if (stores.length === 0) return void api.ui.dialog.replace(() => api.ui.DialogAlert({ title: tr('Import from Claude Code', 'Import a Claude Code-ból'), message: tr('No Frugalitas ledger found under ~/.claude/plugins/store or ~/.claude-personal/plugins/store.', 'Nincs Frugalitas főkönyv a ~/.claude/plugins/store vagy ~/.claude-personal/plugins/store alatt.'), onConfirm: () => api.ui.dialog.clear() }))
+    api.ui.dialog.replace(() =>
+      api.ui.DialogSelect({
+        title: tr('Import coins from Claude Code', 'Garas importálása a Claude Code-ból'),
+        options: stores.map((s, i) => ({ title: `${earned(s.ledger)} ${tr('coins earned', 'garas szerezve')} · ${rankOf(earned(s.ledger)).name}`, description: s.file.replace(homedir(), '~'), value: i })),
+        onSelect: o => {
+          const merged = importLedger(ledger(), stores[o.value as number]!.ledger)
+          saveLedger(merged)
+          setLedger(merged)
+          api.ui.dialog.clear()
+          api.ui.toast({ title: 'Frugalitas', message: tr(`Imported: ${earned(merged)} coins earned, ${balance(merged)} in your pocket.`, `Importálva: ${earned(merged)} garas szerezve, ${balance(merged)} a zsebben.`), variant: 'success' })
+        },
+      }),
+    )
+  }
+
   const menu = () => {
     const sid = currentSession()
     const entries: { title: string; description: string; run: () => void }[] = [
       { title: tr('This month', 'Ez a hónap'), description: tr('daily bars, models, cache', 'napi oszlopok, modellek, cache'), run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 0 })) },
       { title: tr('Last 7 days', 'Utolsó 7 nap'), description: '', run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 7 })) },
       { title: tr('Last 30 days', 'Utolsó 30 nap'), description: '', run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 30 })) },
-      { title: tr('Tips and quest', 'Tippek és küldetés'), description: tr('savings tips, today\'s quest', 'megtakarítási tippek, mai küldetés'), run: () => void show('Frugalitas', () => tipsText({ ...common(sid), priceOf, pack: pack() })) },
+      { title: tr('Tips and quest', 'Tippek és küldetés'), description: tr('savings tips, today\'s quest', 'megtakarítási tippek, mai küldetés'), run: () => void show('Frugalitas', () => tipsText({ ...common(sid), priceOf, pack: pack(), extra: tipExtras(sid) })) },
       { title: tr('Coins and rank', 'Garas és rang'), description: tr('what thrift has earned', 'amit a spórolás hozott'), run: () => void show('Frugalitas', async () => (budgets.daily > 0 ? xpText(ledger(), budgets.daily) : tr('Coins need a daily budget (dailyBudget in frugalitas.json).', 'Garashoz napi keret kell (dailyBudget a frugalitas.json-ban).'))) },
       { title: tr('Shop', 'Bolt'), description: tr('mascot skins and message packs: buy or wear', 'mascot-skinek és üzenet-packek: vásárlás, viselés'), run: () => shop() },
       { title: tr('Restart from a handover', 'Újrakezdés átadással'), description: tr('a small model summarises, a new session continues', 'kis modell összefoglal, új session folytatja'), run: () => void restart(false, sid) },
       { title: tr('Restart (Sonnet writes it)', 'Újrakezdés (Sonnet írja)'), description: tr('for conversations too big for Haiku', 'Haikunak túl nagy beszélgetésekhez'), run: () => void restart(true, sid) },
       { title: tr('Handovers', 'Átadások'), description: tr('read or continue from a saved one', 'mentett megnyitása vagy folytatása'), run: () => handovers() },
       { title: tr('Switch to Fukarléc (Hungarian)', 'Váltás Frugalitasra (angol)'), description: tr('words, characters and currency change; budgets and coins stay', 'a szavak, szereplők és pénznem változik; a keretek és garasok maradnak'), run: switchMode },
+      { title: tr('Import coins from Claude Code', 'Garas importálása a Claude Code-ból'), description: tr('merge its ledger into this one; safe to repeat', 'a főkönyve beolvasztása ebbe; ismételhető'), run: importCoins },
       { title: tr('Refresh numbers', 'Számok frissítése'), description: tr('re-read today and month from LiteLLM', 'ma és hó újraolvasása'), run: () => void refresh().then(() => api.ui.toast({ title: 'Frugalitas', message: `today ${money(today() ?? 0)} · month ${money(month() ?? 0)}`, variant: 'info' })) },
     ]
     api.ui.dialog.setSize('medium')
@@ -484,7 +531,7 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
   const adviceBlock = (sid: string, theme: any) => {
     const s = sessions()[sid]
     const p = s && priceOf(s.model)
-    const expired = s && p && s.warmSince > 0 && !busy(sid) && now() > s.warmSince + cacheTtl && s.ctx >= 50_000
+    const expired = s && p && s.warmSince > 0 && !busy(sid) && now() > s.warmSince + cacheTtl && s.ctx >= minContext
     const blocks: any[] = []
     if (expired && s && p) {
       const c = restartCosts(s.ctx, s.baseCtx, p, false)

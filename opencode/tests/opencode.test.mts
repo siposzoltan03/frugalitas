@@ -14,7 +14,8 @@ const shared = await import('../shared')
 const { mascotCells } = await import('../mascot-cells')
 const { rowsOf } = await import('../restart')
 const { adviceFrom } = await import('../report')
-const { shopItems, shopRow, xpText } = await import('../ledger')
+const { findClaudeStores, importLedger, priceOfKey, shopItems, shopRow, xpText } = await import('../ledger')
+const { cacheSoonWarning, clearOrRewriteTip } = await import('../../hooks/advice')
 const { setMode } = await import('../../hooks/mode')
 const { skinById } = await import('../../hooks/skins')
 const { packById } = await import('../../hooks/packs')
@@ -146,5 +147,59 @@ describe('shop and coins', () => {
   })
   test('rank text names the rank and the balance', () => {
     assert.match(xpText(ledger, 25), /coins earned/)
+  })
+})
+
+describe('importing the Claude Code ledger', () => {
+  const claude = join(home, 'claude-dir')
+  const writeStore = (name: string, xp: unknown) => {
+    mkdirSync(join(claude, 'plugins', 'store'), { recursive: true })
+    writeFileSync(join(claude, 'plugins', 'store', name), JSON.stringify({ xp, other: { x: 1 } }))
+  }
+  const base = asLedger(undefined, '2026-10-21', 0)
+
+  test('finds the plugin stores that hold a ledger, and skips the rest', () => {
+    writeStore('frugalitas_frugalitas-abc.json', { ...base, days: { '2026-10-10': 18 } })
+    writeStore('frugalitas_inline-def.json', { nothing: true })
+    writeStore('fukarlec_other.json', { ...base, days: { '2026-10-11': 5 } })
+    const found = findClaudeStores('2026-10-21', [claude, join(home, 'nowhere')])
+    assert.equal(found.length, 1)
+    assert.equal(found[0]!.ledger.days['2026-10-10'], 18)
+  })
+
+  test('a day both credited counts once; purchases union and cost is recomputed', () => {
+    const pack = shopItems().find(i => i.kind === 'pack' && i.price > 0)!
+    const key = `pack:${pack.id}`
+    const own = { ...base, days: { '2026-10-10': 18, '2026-10-12': 20 }, quests: {}, owned: [key], spent: 999 }
+    const theirs = { ...base, days: { '2026-10-10': 20, '2026-10-11': 15 }, quests: { '2026-10-11': 5 }, owned: ['skin:pirate'], spent: 40, since: '2026-10-01' }
+    const merged = importLedger(own, theirs)
+    assert.deepEqual(merged.days, { '2026-10-10': 20, '2026-10-11': 15, '2026-10-12': 20 })
+    assert.deepEqual(merged.quests, { '2026-10-11': 5 })
+    assert.equal(merged.since, '2026-10-01')
+    assert.deepEqual([...merged.owned].sort(), [key, 'skin:pirate'].sort())
+    assert.equal(merged.spent, priceOfKey(key) + priceOfKey('skin:pirate'))
+    // repeating the import changes nothing
+    assert.deepEqual(importLedger(merged, theirs), merged)
+  })
+
+  test('priceOfKey knows skins and packs, and not what it does not know', () => {
+    assert.ok(priceOfKey('skin:pirate') > 0)
+    assert.equal(priceOfKey('skin:nope'), 0)
+    assert.equal(priceOfKey('garbage'), 0)
+  })
+})
+
+describe('advice minimum context', () => {
+  const price = { input: 5e-6, output: 25e-6, cacheRead: 5e-7, cacheWrite: 6.25e-6 }
+  test('the 30-second warning and the expiry comparison honour a lower limit', () => {
+    assert.equal(cacheSoonWarning(20_000, 30_000, price), undefined)
+    assert.ok(cacheSoonWarning(20_000, 30_000, price, 20_000))
+    assert.equal(clearOrRewriteTip(30_000, 10_000, price), undefined)
+    assert.ok(clearOrRewriteTip(30_000, 10_000, price, undefined, 20_000))
+  })
+  test('extra advice joins the tips', () => {
+    const month = { days: [], total: { spend: 0, promptTokens: 0, completionTokens: 0, cacheRead: 0, cacheWrite: 0, cacheSaved: 0, requests: 0, failed: 0 } }
+    const a = adviceFrom({ month, history: undefined, date: '2026-10-21', budgets: { session: 0, daily: 0, monthly: 0 }, priceOf: () => undefined, fun: false, pack: packById(undefined), extra: ['extra tip', undefined] })
+    assert.deepEqual(a.tips, ['extra tip'])
   })
 })

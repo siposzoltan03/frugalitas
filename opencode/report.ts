@@ -43,6 +43,8 @@ export function adviceFrom(o: {
   priceOf: (model: string) => Prices | undefined
   fun: boolean
   pack: Pack
+  /** Advice that needs more than the daily numbers (the cache-expired comparison, the parallel-use tip). */
+  extra?: (string | undefined)[]
 }): Advice {
   const today = o.month.days.find(d => d.date === o.date)
   const lastActive = today ?? o.month.days.filter(d => d.metrics.spend > 0).at(-1)
@@ -52,6 +54,7 @@ export function adviceFrom(o: {
     outputTip(lastActive, o.priceOf),
     failedTip(lastActive),
     o.history ? weekdayTip(o.history) : undefined,
+    ...(o.extra ?? []),
   ].filter((t): t is string => t !== undefined)
   const seed = Number(o.date.slice(8))
   let quest: string | null = null
@@ -65,13 +68,13 @@ export function adviceFrom(o: {
 }
 
 /** Every current savings tip and today's quest (the parts of Claude Code's advice that need no session). */
-export async function tipsText(c: Common & { priceOf: (model: string) => Prices | undefined; pack: Pack }): Promise<string> {
+export async function tipsText(c: Common & { priceOf: (model: string) => Prices | undefined; pack: Pack; extra?: (string | undefined)[] }): Promise<string> {
   const date = utcDate(Date.now())
   const [month, history] = await Promise.all([
     fetchActivity(fetchLite, c.conn, `${date.slice(0, 7)}-01`, date),
     fetchActivity(fetchLite, c.conn, addDays(date, -56), date).catch(() => undefined),
   ])
-  const advice = adviceFrom({ month, history: history?.days, date, budgets: c.budgets, priceOf: c.priceOf, fun: c.fun, pack: c.pack })
+  const advice = adviceFrom({ month, history: history?.days, date, budgets: c.budgets, priceOf: c.priceOf, fun: c.fun, pack: c.pack, extra: c.extra })
   const lines = [tr('🪙 Savings tips', '🪙 Megtakarítási tippek'), '']
   if (advice.tips.length === 0) lines.push(tr('Nothing to flag right now. Carry on.', 'Most nincs mit szóvá tenni. Hajrá.'))
   for (const t of advice.tips) lines.push(t, '')

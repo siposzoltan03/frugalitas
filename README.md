@@ -177,7 +177,7 @@ LiteLLM, pricing, advice and message modules. It reads the connection from an op
 
 What works: the status line next to the prompt (session, today, month, mood, cache countdown), the 80% and 100% budget
 toasts, the expensive-turn toast, the cache warnings and keep/compact/clear advice, the `block` mode, the full report and tips (`/frugal` opens a menu), and coins, ranks and the message-pack shop
-(its own ledger in `~/.config/opencode/frugalitas-ledger.json`, separate from Claude Code's). `/frugal restart` as menu entries (a
+(its own ledger in `~/.config/opencode/frugalitas-ledger.json`; `/frugal` → Import coins from Claude Code folds in the Claude Code plugin's ledger from `~/.claude/plugins/store` or `~/.claude-personal/plugins/store`, safe to repeat). `/frugal restart` as menu entries (a
 small model writes a handover, a new session opens with it pre-filled; files in
 `~/.config/opencode/frugalitas-handovers/`). The sidebar shows the mascot (half-block pixel art; option
 `mascot`: `small` default, `large`, `off`), budget bars, the cache-expired comparison, a rotating tip and the quest. Skins and packs are in the shop. Not yet: the full-screen dashboard.
@@ -220,7 +220,7 @@ By hand instead of the script: `~/.config/opencode/tui.json`:
 The guard re-reads the file on every prompt; the TUI plugin reads it at startup.
 
 Options: `sessionBudget`, `dailyBudget`, `monthlyBudget`, `overBudget` (`warn`/`block`), `expensiveTurn`, `fun`, `mode`,
-`hufRate`, `promptCacheTtl`. With `overBudget: "block"` a prompt over budget is refused; opencode only shows "Failed to
+`hufRate`, `promptCacheTtl`, `adviceMinContext` (tokens of context below which the cache advice stays quiet, default 50000), `mascot`, `mascotBackdrop`. With `overBudget: "block"` a prompt over budget is refused; opencode only shows "Failed to
 send prompt", so the reason comes as a toast. `/frugal-allow` (palette) lifts the block for the UTC day.
 
 Slash commands: `/frugal` (menu: reports, tips, coins, shop, restart, handovers, mode), `/frugal-restart`,

@@ -251,8 +251,9 @@ export function clearOrRewriteTip(
   baseTokens: number,
   price: Prices | undefined,
   restart?: number,
+  minTokens = MIN_CONTEXT_TOKENS,
 ): string | undefined {
-  if (!price || contextTokens < 50_000) return undefined
+  if (!price || contextTokens < minTokens) return undefined
   const c = restartCosts(contextTokens, baseTokens, price, false)
   const showRestart = restart !== undefined && restartWorthIt(restart, c)
   const same = showRestart ? tr('/frugal restart', '/fukarlec restart') : c.best === 'compact' ? '/compact' : tr('just keep going', 'folytasd nyugodtan')
@@ -265,8 +266,11 @@ export function clearOrRewriteTip(
 }
 
 /** Said ~30 s before the cache expires, while sending now (or compacting now) still reads it cheaply. */
-export function cacheSoonWarning(remainingMs: number, contextTokens: number, price: Prices | undefined): string | undefined {
-  if (remainingMs <= 0 || remainingMs > 30_000 || contextTokens < 50_000) return undefined
+/** Below this many tokens of context a cache rewrite is too cheap to advise about. */
+export const MIN_CONTEXT_TOKENS = 50_000
+
+export function cacheSoonWarning(remainingMs: number, contextTokens: number, price: Prices | undefined, minTokens = MIN_CONTEXT_TOKENS): string | undefined {
+  if (remainingMs <= 0 || remainingMs > 30_000 || contextTokens < minTokens) return undefined
   const cost = price ? ` ≈ ${money(contextTokens * price.cacheWrite)}` : ''
   const compactNow = price ? tr(` (~${money(contextTokens * price.cacheRead + SUMMARY_TOKENS * price.output)} while it's warm)`, ` (~${money(contextTokens * price.cacheRead + SUMMARY_TOKENS * price.output)}, amíg meleg)`) : ''
   return tr(`⏳ The cache expires in ${Math.ceil(remainingMs / 1000)} s: rewriting ${k(contextTokens)} tokens would cost${cost || ' extra'}. Send now, or /compact now${compactNow}.`, `⏳ ${Math.ceil(remainingMs / 1000)} mp múlva lejár a cache: ${k(contextTokens)} token újraírása${cost} lenne. Küldj most, vagy /compact most${compactNow}.`)

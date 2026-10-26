@@ -1,6 +1,6 @@
 // Coins, ranks and the shop for the opencode plugin. The ledger is a file of its own (not Claude Code's store):
 // both tools credit the same LiteLLM days, so merge them only deliberately (see mergeFukarlec in ../hooks/xp.ts).
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,9 +9,9 @@ import { addDays, money } from '../hooks/format'
 import { fetchActivity } from '../hooks/litellm'
 import type { Conn } from '../hooks/litellm'
 import { tr } from '../hooks/mode'
-import { modePacks } from '../hooks/packs'
-import { modeSkins } from '../hooks/skins'
-import { asLedger, balance, credit, creditFrom, earned, owns, progressBar, rankOf, worn } from '../hooks/xp'
+import { PACKS, modePacks } from '../hooks/packs'
+import { SKINS, modeSkins } from '../hooks/skins'
+import { asLedger, balance, credit, creditFrom, earned, mergeLedgers, owns, progressBar, rankOf, worn } from '../hooks/xp'
 import type { Ledger, ShopItem } from '../hooks/xp'
 import { fetchLite } from './shared'
 
@@ -69,3 +69,39 @@ export function shopRow(l: Ledger, i: ShopItem): { title: string; footer: string
   const price = i.price === 0 ? tr('free', 'ingyen') : tr(`${i.price} coins`, `${i.price} garas`)
   return { title: `${mark} ${i.name}`, footer: price, description: i.description, category: i.kind === 'skin' ? tr('Mascot skins', 'Mascot-skinek') : tr('Message packs', 'Üzenet-packek') }
 }
+
+/** What a bought item costs, by its ledger key (`skin:pirate`, `pack:grandma`), across both modes. */
+export function priceOfKey(key: string): number {
+  const [kind, id] = key.split(':')
+  const item = (kind === 'skin' ? SKINS : kind === 'pack' ? PACKS : []).find(x => x.id === id)
+  return item?.price ?? 0
+}
+
+export type ClaudeStore = { file: string; ledger: Ledger }
+
+/**
+ * The Claude Code plugin's ledgers on this machine: its plugin store keeps them in
+ * `<config dir>/plugins/store/frugalitas_*.json`, under `xp`. Looks in ~/.claude, ~/.claude-personal and
+ * $CLAUDE_CONFIG_DIR; `dirs` overrides that (for tests).
+ */
+export function findClaudeStores(today: string, dirs?: string[]): ClaudeStore[] {
+  const roots = dirs ?? [join(homedir(), '.claude'), join(homedir(), '.claude-personal'), ...(process.env.CLAUDE_CONFIG_DIR ? [process.env.CLAUDE_CONFIG_DIR] : [])]
+  const found: ClaudeStore[] = []
+  for (const root of new Set(roots)) {
+    const dir = join(root, 'plugins', 'store')
+    let names: string[] = []
+    try {
+      names = readdirSync(dir).filter(f => /^frugalitas_.*\.json$/.test(f))
+    } catch {}
+    for (const name of names) {
+      try {
+        const xp = JSON.parse(readFileSync(join(dir, name), 'utf8'))?.xp
+        if (xp && typeof xp === 'object' && xp.days) found.push({ file: join(dir, name), ledger: asLedger(xp, today, Date.now()) })
+      } catch {}
+    }
+  }
+  return found
+}
+
+/** Folds a Claude Code ledger into this one; safe to repeat. */
+export const importLedger = (own: Ledger, from: Ledger): Ledger => mergeLedgers(own, from, priceOfKey)

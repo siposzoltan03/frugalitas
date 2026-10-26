@@ -239,6 +239,29 @@ export function mergeFukarlec(own: Ledger, hu: Ledger): Ledger {
   }
 }
 
+/**
+ * Two ledgers of the same mode (Claude Code's and opencode's) as one. Both credit the same LiteLLM days, so a day
+ * either credited counts once (the larger value); purchases are the union, and what they cost is recomputed from
+ * `priceOf` (a key like `skin:pirate`), so nothing is charged twice. Ledger `a` keeps its outfit.
+ */
+export function mergeLedgers(a: Ledger, b: Ledger, priceOf: (key: string) => number): Ledger {
+  const maxed = (x: Record<string, number>, y: Record<string, number>) => {
+    const out = { ...x }
+    for (const [d, xp] of Object.entries(y)) out[d] = Math.max(xp, out[d] ?? 0)
+    return out
+  }
+  const owned = [...new Set([...a.owned, ...b.owned])]
+  return {
+    ...a,
+    since: b.since < a.since ? b.since : a.since,
+    days: maxed(a.days, b.days),
+    quests: maxed(a.quests, b.quests),
+    owned,
+    spent: owned.reduce((n, key) => n + priceOf(key), 0),
+    updatedAt: Math.max(a.updatedAt, b.updatedAt),
+  }
+}
+
 /** What the current mode wears. */
 export function worn(ledger: Ledger): { skin: string; pack: string } {
   return mode() === 'fukarlec' ? ledger.fukarlec : { skin: ledger.skin, pack: ledger.pack }
