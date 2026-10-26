@@ -223,6 +223,10 @@ Options: `sessionBudget`, `dailyBudget`, `monthlyBudget`, `overBudget` (`warn`/`
 `hufRate`, `promptCacheTtl`. With `overBudget: "block"` a prompt over budget is refused; opencode only shows "Failed to
 send prompt", so the reason comes as a toast. `/frugal-allow` (palette) lifts the block for the UTC day.
 
+Slash commands: `/frugal` (menu: reports, tips, coins, shop, restart, handovers, mode), `/frugal-restart`,
+`/frugal-restart-sonnet`, `/frugal-handovers`, `/frugal-mode`, `/frugal-allow`. They are also in the command palette
+(`ctrl+p`).
+
 ## Developing the opencode port
 
 ```

@@ -430,8 +430,11 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
     api.ui.toast({ title: 'Frugalitas', message: next === 'fukarlec' ? '🇭🇺 Fukarléc mód: magyarul beszélünk, Fukar bácsi a boltos.' : '🇬🇧 Frugalitas mode: English, Old Penny keeps the shop.', variant: 'info' })
   }
 
+  /** The open session's id, if a session is on screen. */
+  const currentSession = (): string | undefined => (api.route.current.name === 'session' ? String((api.route.current as any).params?.sessionID ?? '') || undefined : undefined)
+
   const menu = () => {
-    const sid = api.route.current.name === 'session' ? String((api.route.current as any).params?.sessionID ?? '') : undefined
+    const sid = currentSession()
     const entries: { title: string; description: string; run: () => void }[] = [
       { title: tr('This month', 'Ez a hónap'), description: tr('daily bars, models, cache', 'napi oszlopok, modellek, cache'), run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 0 })) },
       { title: tr('Last 7 days', 'Utolsó 7 nap'), description: '', run: () => void show('Frugalitas', () => reportText({ ...common(sid), days: 7 })) },
@@ -565,6 +568,30 @@ const run = async (api: Parameters<TuiPlugin>[0], entryOptions: Parameters<TuiPl
         namespace: 'palette',
         slashName: 'frugal-mode',
         run: switchMode,
+      },
+      {
+        name: 'frugal.restart',
+        title: 'Frugalitas: restart from a handover (small model summarises, new session continues)',
+        category: 'Plugin',
+        namespace: 'palette',
+        slashName: 'frugal-restart',
+        run: () => void restart(false, currentSession()),
+      },
+      {
+        name: 'frugal.restart.sonnet',
+        title: 'Frugalitas: restart from a handover, written by Sonnet',
+        category: 'Plugin',
+        namespace: 'palette',
+        slashName: 'frugal-restart-sonnet',
+        run: () => void restart(true, currentSession()),
+      },
+      {
+        name: 'frugal.handovers',
+        title: 'Frugalitas: saved handovers',
+        category: 'Plugin',
+        namespace: 'palette',
+        slashName: 'frugal-handovers',
+        run: handovers,
       },
       {
         name: 'frugal.allow',
