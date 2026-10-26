@@ -2,10 +2,10 @@
   "name": "frugalitas-opencode",
   "private": true,
   "type": "module",
-  "description": "Frugalitas for opencode: the TUI and server plugins. Not published; only here for the type-check and tests.",
+  "description": "Dev tooling for Frugalitas' opencode port (type-check and tests). Kept apart from the plugin files so that opencode never resolves these copies of solid-js and friends instead of its own.",
   "scripts": {
-    "typecheck": "tsc -p .",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "typecheck": "tsc -p tsconfig.typecheck.json",
+    "test": "node --import tsx --test ../tests/*.test.mts"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "1.18.1",

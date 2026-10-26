@@ -1,0 +1,58 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": [
+      "es2023",
+      "dom"
+    ],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
+    "types": [
+      "node"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@opencode-ai/plugin": [
+        "node_modules/@opencode-ai/plugin/dist/index.d.ts"
+      ],
+      "@opencode-ai/plugin/tui": [
+        "node_modules/@opencode-ai/plugin/dist/tui.d.ts"
+      ],
+      "@opencode-ai/sdk": [
+        "node_modules/@opencode-ai/sdk/dist/index.d.ts"
+      ],
+      "@opencode-ai/sdk/v2": [
+        "node_modules/@opencode-ai/sdk/dist/v2/index.d.ts"
+      ],
+      "*": [
+        "node_modules/*",
+        "node_modules/@types/*"
+      ]
+    },
+    "typeRoots": [
+      "./node_modules/@types"
+    ],
+    "allowJs": true,
+    "checkJs": true
+  },
+  "include": [
+    "../*.ts",
+    "../tests/*.mts",
+    "../../hooks/mode.ts",
+    "../../hooks/format.ts",
+    "../../hooks/advice.ts",
+    "../../hooks/litellm.ts",
+    "../../hooks/packs.ts",
+    "../../hooks/xp.ts",
+    "../../hooks/mascot.ts",
+    "../../hooks/skins/*.ts",
+    "../install.mjs",
+    "../*.tsx"
+  ]
+}

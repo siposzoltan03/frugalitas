@@ -182,6 +182,22 @@ small model writes a handover, a new session opens with it pre-filled; files in
 `~/.config/opencode/frugalitas-handovers/`). The sidebar shows the mascot (half-block pixel art; option
 `mascot`: `small` default, `large`, `off`), budget bars, the cache-expired comparison, a rotating tip and the quest. Skins and packs are in the shop. Not yet: the full-screen dashboard.
 
+### Install
+
+```
+git clone https://github.com/siposzoltan03/frugalitas.git
+node frugalitas/opencode/install.mjs     # --dry-run to preview, --uninstall to remove
+```
+
+It needs Node 18+, and adds the two plugin entries to your **global** opencode config (`~/.config/opencode`: `tui.json`
+and `opencode.jsonc`, comments kept). Don't put them in a workspace config: apex regenerates its workspace
+`opencode.json` on every update. It also writes a default options file if you have none, and warns when there is no
+`litellm` provider in your config (the plugin reads the proxy URL, key and headers from it) or when your opencode is
+not 1.18.x (the TUI plugin API changes between versions). Restart opencode or apex afterwards. Re-running it is safe.
+Keep the clone where it is: the config points at its files. `git pull` updates the plugin.
+
+### Configure
+
 Two entry points, because opencode keeps TUI and server plugins apart. Both read one options file,
 `~/.config/opencode/frugalitas.json` (options given on a plugin entry override it):
 
@@ -189,13 +205,13 @@ Two entry points, because opencode keeps TUI and server plugins apart. Both read
 { "overBudget": "warn", "sessionBudget": 10, "dailyBudget": 25, "monthlyBudget": 500 }
 ```
 
-`~/.config/opencode/tui.json`:
+By hand instead of the script: `~/.config/opencode/tui.json`:
 
 ```json
 { "plugin": ["/path/to/frugalitas/opencode/tui.tsx"] }
 ```
 
-`~/.config/opencode/opencode.jsonc` (the budget guard; put it in the global config, not a workspace one that gets regenerated):
+`~/.config/opencode/opencode.jsonc` (the budget guard):
 
 ```jsonc
 "plugin": ["/path/to/frugalitas/opencode/server.ts"]
@@ -210,7 +226,7 @@ send prompt", so the reason comes as a toast. `/frugal-allow` (palette) lifts th
 ## Developing the opencode port
 
 ```
-cd opencode && npm install
+cd opencode/dev && npm install   # kept apart from the plugin files so opencode never loads these copies of solid-js
 npm run typecheck   # tsc against opencode's plugin, SDK and OpenTUI types
 npm test            # node:test through tsx: options, connection, mascot cells, transcript rows, advice, shop
 ```
