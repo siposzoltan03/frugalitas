@@ -16,6 +16,7 @@ import {
   clock,
   contextLine,
   modelLine,
+  outdatedModelRoast,
   restartWorthIt,
   CONDENSE_RATIO,
   condenseTranscript,
@@ -781,6 +782,16 @@ export const register: Register = (on, options) => {
         restart === undefined ? undefined : { cost: restart, baseTokens: baseContextTokens },
       )
       await offerTip(io, `cache:${cacheWarmSinceAt}`, warning, true)
+    }
+    if (conn && io && isFun && e.origin.kind === 'composer') {
+      const model = await $.session.model().catch(() => '')
+      await ensurePrices(io)
+      const roast = model ? outdatedModelRoast(model, Object.keys(prices), await $.clock.now()) : undefined
+      // Once per model per session: a roast, not a siege.
+      if (roast && !toldTips.has(`old:${model}`)) {
+        toldTips.add(`old:${model}`)
+        io.toast(roast, 15_000)
+      }
     }
     if (!isBlocking || !conn || !snap || (e.origin.kind !== 'composer' && e.origin.kind !== 'bridge')) return next(e)
     const over = overScopes()

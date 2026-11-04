@@ -43,6 +43,8 @@ import {
   tokenCount,
   handoverMarkdown,
   handoverTitle,
+  newerModel,
+  outdatedModelRoast,
 } from '../hooks/advice'
 
 const NOW = Date.parse('2026-10-13T12:00:00Z')
@@ -671,3 +673,25 @@ describe('LiteLLM daily activity over several pages', () => {
   })
 })
 
+
+describe('outdated-model roast', () => {
+  const served = ['claude-opus-4-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'azure_ai/claude-haiku-5-5', 'claude-3-5-sonnet']
+
+  test('an older release of the same family names the newest one', () => {
+    expect(newerModel('claude-opus-4-1', served)).toBe('claude-opus-5-5')
+    expect(newerModel('claude-3-5-sonnet', served)).toBe('claude-sonnet-5-5')
+    expect(newerModel('claude-haiku-5-5[1m]', served)).toBeUndefined()
+  })
+
+  test('the newest release, aliases and unknown models are left alone', () => {
+    expect(outdatedModelRoast('claude-sonnet-5-5', served, 0)).toBeUndefined()
+    expect(outdatedModelRoast('opus', served, 0)).toBeUndefined()
+    expect(outdatedModelRoast('gpt-4o', served, 0)).toBeUndefined()
+  })
+
+  test('the roast names both models', () => {
+    const roast = outdatedModelRoast('claude-opus-4-1', served, 3)!
+    expect(roast).toContain('claude-opus-4-1')
+    expect(roast).toContain('claude-opus-5-5')
+  })
+})

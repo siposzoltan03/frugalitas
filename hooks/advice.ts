@@ -462,3 +462,58 @@ export function questFor(date: string): Quest {
   const n = [...date].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7)
   return QUESTS[n % QUESTS.length]!
 }
+
+// --- the outdated-model roast ---------------------------------------------------------
+
+const FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'] as const
+
+/** `claude-sonnet-5-5`, `azure_ai/claude-opus-4-1[1m]` or `claude-3-5-sonnet` as family and version; undefined for aliases like `opus`. */
+export function parseModel(name: string): { family: string; version: number } | undefined {
+  const bare = name.replace(/^.*\//, '').replace(/\[.*\]$/, '').toLowerCase()
+  const family = FAMILIES.find(f => bare.includes(f))
+  if (!family) return undefined
+  const after = new RegExp(`${family}[-_ ]?(\\d+)(?:[-_.](\\d{1,2})(?!\\d))?`).exec(bare)
+  const before = new RegExp(`(\\d+)(?:[-_.](\\d{1,2}))?[-_ ]${family}`).exec(bare)
+  const m = after ?? before
+  if (!m) return undefined
+  return { family, version: Number(m[1]) + Number(m[2] ?? 0) / 100 }
+}
+
+/**
+ * A newer release of the session's model family that the proxy serves, spelled as the proxy does.
+ * Aliases (`opus`) and unknown models never count as outdated.
+ */
+export function newerModel(model: string, available: readonly string[]): string | undefined {
+  const have = parseModel(model)
+  if (!have) return undefined
+  let best: { name: string; version: number } | undefined
+  for (const name of available) {
+    const m = parseModel(name)
+    if (m?.family === have.family && m.version > have.version && m.version > (best?.version ?? 0)) best = { name, version: m.version }
+  }
+  return best?.name.replace(/^.*\//, '').replace(/\[.*\]$/, '')
+}
+
+/** A roast for running last season's model; `{old}` and `{new}` are the model names. */
+export function outdatedModelRoast(model: string, available: readonly string[], seed: number): string | undefined {
+  const fresh = newerModel(model, available)
+  if (!fresh) return undefined
+  const old = model.replace(/^.*\//, '').replace(/\[.*\]$/, '')
+  const lines = tr(
+    [
+      `🦖 You're on ${old}, and ${fresh} is right there. Dial-up called, it wants its mindset back.`,
+      `🧓 ${old}? Bold. ${fresh} exists, but sure, vintage is "in".`,
+      `📼 Running ${old} while ${fresh} is on the menu. Next you'll ask for a fax number.`,
+      `🪦 ${old} was great. Was. ${fresh} is out, and so is your excuse: /model ${fresh}`,
+      `🥔 ${fresh} is available and you picked ${old}. Bargain-bin energy.`,
+    ],
+    [
+      `🦖 ${old}-on ülsz, pedig ott a ${fresh}. A rendszerváltás is régen volt, lépj már túl rajta.`,
+      `🧓 ${old}? Szép. Van ${fresh} is, de a retró most menő, igaz?`,
+      `📼 ${old}, miközben ${fresh} is kapható. Mi a következő, MÁV-menetrend papíron?`,
+      `🪦 ${old} jó volt. Volt. Itt a ${fresh}, a kifogásod elfogyott: /model ${fresh}`,
+      `🥔 Ott a ${fresh}, te meg a ${old}-ot választottad. Ez már a hagyománytisztelet csúcsa.`,
+    ],
+  )
+  return lines[Math.abs(Math.floor(seed)) % lines.length]
+}

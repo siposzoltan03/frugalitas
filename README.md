@@ -23,6 +23,8 @@ spend bookkeeping. It is active only in sessions that run through LiteLLM (`ANTH
   prompts are refused over budget until `/frugal allow` lifts it for the day.
 - **`/frugal`:** monthly report with daily bars, per-model breakdown ($/MTok), cache hit rate and savings.
   `/frugal 7` for the last 7 days · `/frugal refresh` · `/frugal panel` for the dashboard · `/frugal help`.
+- **Outdated-model roast:** run an older release of a model family the proxy also serves a newer one of, and the first
+  prompt gets a toast roasting you for it (once per model per session; fun mode only).
 - **Fun mode:** a mood emoji (😇 → 🙂 → 😬 → 🥵 → 🔥 → 💀), a pixel-art mascot on the dashboard whose mood follows your
   budget, quips, and what your spend would have bought (coffees, pizzas, concert tickets…).
 
