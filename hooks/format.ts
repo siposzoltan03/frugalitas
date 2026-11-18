@@ -8,16 +8,34 @@ export type Spend = { session: number; today: number; month: number }
 
 export type Scope = keyof Budgets
 
+/** `usd`: LiteLLM's billed dollars. `tokens`: subscription mode, weighted tokens (see subscription.ts). */
+export type Unit = 'usd' | 'tokens'
+let unit: Unit = 'usd'
+export const setUnit = (next: Unit): void => {
+  unit = next
+}
+export const isTokens = (): boolean => unit === 'tokens'
+
 export const SCOPE_NAMES: Record<Scope, string> = {
   session: 'session',
   get daily() {
-    return tr('daily', 'napi')
+    return isTokens() ? tr('5h window', '5 órás ablak') : tr('daily', 'napi')
   },
   get monthly() {
-    return tr('monthly', 'havi')
+    return isTokens() ? tr('weekly', 'heti') : tr('monthly', 'havi')
   },
 }
 
+/** Weighted tokens as `1.2M`, `340k`. */
+export function tokenCount(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`
+  if (n >= 1e7) return `${Math.round(n / 1e6)}M`
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`
+  if (n >= 1e3) return `${Math.round(n / 1e3)}k`
+  return String(Math.round(n))
+}
+
+/** Dollars. In subscription mode these are API-equivalent: what the API would have billed. */
 export function money(usd: number): string {
   if (usd >= 100) return `$${Math.round(usd)}`
   return `$${usd.toFixed(2)}`
@@ -57,17 +75,48 @@ export function mood(ratio: number): string {
   return '💀'
 }
 
-const part = (label: string, spent: number, budget: number) =>
-  budget > 0 ? `${label} ${money(spent)}/${money(budget)}` : `${label} ${money(spent)}`
+/** What a budget counts: dollars, or weighted tokens in subscription mode. */
+export const amount = (n: number): string => (unit === 'tokens' ? tokenCount(n) : money(n))
 
-export function statusLine(spend: Spend, budgets: Budgets, fun: boolean, stale: boolean): string {
+const part = (label: string, spent: number, budget: number) =>
+  budget > 0 ? `${label} ${amount(spent)}/${amount(budget)}` : `${label} ${amount(spent)}`
+
+/** A rate-limit window the subscription reports (Claude Code's own figures, not ours). */
+export type Limit = { kind: string; percentUsed: number; resetsAt?: string }
+
+const limitName = (kind: string) => (kind === 'five_hour' ? '5h' : kind === 'seven_day' ? tr('7d', '7n') : kind === 'spend_limit' ? 'spend' : kind)
+
+/** `2h14m`, `3d4h`, `38m`: how long until `resetsAt`. */
+export function resetIn(resetsAt: string | undefined, now: number): string {
+  const ms = resetsAt ? Date.parse(resetsAt) - now : NaN
+  if (!Number.isFinite(ms) || ms <= 0) return ''
+  const min = Math.ceil(ms / 60_000)
+  if (min >= 2880) return `${Math.floor(min / 1440)}d${Math.floor((min % 1440) / 60)}h`
+  if (min >= 60) return `${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}m`
+  return `${min}m`
+}
+
+/** `5h 23% ↻2h14m · 7d 7% ↻3d4h` */
+export function limitsText(limits: readonly Limit[], now: number): string {
+  return limits
+    .map(l => {
+      const left = now > 0 ? resetIn(l.resetsAt, now) : ''
+      return `${limitName(l.kind)} ${Math.round(l.percentUsed)}%${left ? ` ↻${left}` : ''}`
+    })
+    .join(' · ')
+}
+
+/** `apiWeek`: subscription mode's week at API prices, shown after the budgets. */
+export function statusLine(spend: Spend, budgets: Budgets, fun: boolean, stale: boolean, apiWeek?: number, limits?: string): string {
   const w = worst(spend, budgets)
   const head = fun ? `🪙 ${w ? mood(w.ratio) : '😇'}` : tr('frugal', 'fukarléc')
   const parts = [
     part('session', spend.session, budgets.session),
-    part(tr('today', 'ma'), spend.today, budgets.daily),
-    part(tr('month', 'hó'), spend.month, budgets.monthly),
+    isTokens() ? part('5h', spend.today, budgets.daily) : part(tr('today', 'ma'), spend.today, budgets.daily),
+    isTokens() ? part(tr('week', 'hét'), spend.month, budgets.monthly) : part(tr('month', 'hó'), spend.month, budgets.monthly),
   ]
+  if (apiWeek !== undefined) parts.push(tr(`API ≈${money(apiWeek)}/wk`, `API ≈${money(apiWeek)}/hét`))
+  if (limits) parts.push(`⏱ ${limits}`)
   return tr(`${head} ${parts.join(' · ')}${stale ? ' ⚠︎ stale' : ''}`, `${head} ${parts.join(' · ')}${stale ? ' ⚠︎ régi adat' : ''}`)
 }
 
@@ -96,6 +145,7 @@ const THINGS_HUF: { name: string; huf: number; emoji: string }[] = [
 
 /** "≈ 3 coffees ☕" (or "≈ 3 lángos 🫓" in Fukarléc mode): the dearest thing the amount still buys at least one of. */
 export function inKind(usd: number, hufRate = 350): string {
+  if (isTokens()) return ''
   const shownCount = (count: number) =>
     count >= 10 ? String(Math.round(count)) : count >= 1 ? count.toFixed(1).replace(/\.0$/, '') : count.toFixed(2)
   if (mode() === 'fukarlec') {
@@ -173,15 +223,17 @@ export function report(opts: {
   fun: boolean
   hufRate: number
   streakDays: number
+  /** Subscription mode: API-equivalent dollars per day and model, and in all. */
+  api?: { days: Record<string, number>; models: Record<string, number>; total: number }
 }): string {
   const { activity, budgets, fun, hufRate } = opts
   const lines: string[] = [opts.title, '']
 
   const max = Math.max(0, ...activity.days.map(d => d.metrics.spend))
   for (const d of activity.days) {
-    const over = budgets.daily > 0 && d.metrics.spend > budgets.daily
+    const over = !isTokens() && budgets.daily > 0 && d.metrics.spend > budgets.daily
     lines.push(
-      `${d.date}  ${lpad(money(d.metrics.spend), 7)}  ${bar(d.metrics.spend, max)}${over ? (fun ? ' 🔥' : ' !') : ''}`,
+      `${d.date}  ${lpad(amount(d.metrics.spend), 7)}  ${bar(d.metrics.spend, max)}${over ? (fun ? ' 🔥' : ' !') : ''}${opts.api ? `  ≈${money(opts.api.days[d.date] ?? 0)}` : ''}`,
     )
   }
   if (activity.days.length === 0) lines.push(tr('(no spend in this period)', '(nincs költés ebben az időszakban)'))
@@ -195,22 +247,29 @@ export function report(opts: {
     lines.push('', tr('By model:', 'Modellenként:'))
     for (const [name, m] of [...models].sort((a, b) => b[1].spend - a[1].spend)) {
       const share = total.spend > 0 ? Math.round((m.spend / total.spend) * 100) : 0
+      if (isTokens()) {
+        lines.push(`  ${pad(shortModel(name), 22)} ${lpad(amount(m.spend), 7)}  ${lpad(String(share), 3)}%  ${m.requests} ${tr('requests', 'kérés')}  ≈${money(opts.api?.models[name] ?? 0)}`)
+        continue
+      }
       lines.push(
         tr(`  ${pad(shortModel(name), 22)} ${lpad(money(m.spend), 7)}  ${lpad(String(share), 3)}%  ${lpad(perMTok(m).toFixed(2), 6)} $/MTok  ${m.requests} requests`, `  ${pad(shortModel(name), 22)} ${lpad(money(m.spend), 7)}  ${lpad(String(share), 3)}%  ${lpad(perMTok(m).toFixed(2), 6)} $/MTok  ${m.requests} kérés`),
       )
     }
   }
 
-  lines.push('', tr(`Total: ${money(total.spend)} · ${total.requests} requests`, `Összesen: ${money(total.spend)} · ${total.requests} kérés`))
+  lines.push('', tr(`Total: ${amount(total.spend)} · ${total.requests} requests`, `Összesen: ${amount(total.spend)} · ${total.requests} kérés`))
+  if (opts.api) lines.push(tr(`At API prices that would be ≈${money(opts.api.total)} (list prices, pay-as-you-go)`, `API áron ez ≈${money(opts.api.total)} lenne (listaár, pay-as-you-go)`))
   if (total.promptTokens > 0) {
     lines.push(
-      tr(`Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% hit, ${money(total.cacheSaved)} saved${fun ? ' 🦸' : ''}`, `Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% találat, ${money(total.cacheSaved)} megtakarítás${fun ? ' 🦸' : ''}`),
+      isTokens()
+        ? tr(`Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% hit`, `Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% találat`)
+        : tr(`Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% hit, ${money(total.cacheSaved)} saved${fun ? ' 🦸' : ''}`, `Cache: ${Math.round((total.cacheRead / total.promptTokens) * 100)}% találat, ${money(total.cacheSaved)} megtakarítás${fun ? ' 🦸' : ''}`),
     )
   }
   lines.push(
     tr(`Now: ${statusLine(opts.spend, budgets, fun, false)}`, `Most: ${statusLine(opts.spend, budgets, fun, false)}`),
   )
-  if (fun) {
+  if (fun && !isTokens()) {
     lines.push(tr(`That would have bought: ${inKind(total.spend, hufRate)}`, `Ennyiből: ${inKind(total.spend, hufRate)}`))
     if (opts.streakDays >= 2) lines.push(tr(`🏆 ${opts.streakDays} days in a row within the daily budget. Old Penny is proud!`, `🏆 ${opts.streakDays} napja a napi kereten belül vagy – Fukar bácsi büszke!`))
   }

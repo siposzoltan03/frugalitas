@@ -1,5 +1,5 @@
 import { tr } from './mode'
-import { money } from './format'
+import { amount, isTokens, money } from './format'
 import type { Day, Prices } from './litellm'
 
 // Savings advice beyond the daily tips in format.ts: what the session itself shows
@@ -448,13 +448,13 @@ export const QUESTS: readonly Quest[] = [
     }, done: d => cacheHit(d) >= 0.85, progress: d => tr(`today ${pct(cacheHit(d))}`, `ma ${pct(cacheHit(d))}`) },
   { id: 'half', get text() {
       return tr('spend less than half the daily budget', 'költs a napi keret felénél kevesebbet')
-    }, done: (d, b) => b > 0 && d.metrics.spend <= b / 2, progress: d => `$${d.metrics.spend.toFixed(2)}` },
+    }, done: (d, b) => b > 0 && d.metrics.spend <= b / 2, progress: d => amount(d.metrics.spend) },
   { id: 'models', get text() {
       return tr('use at most 2 models', 'használj legfeljebb 2 modellt')
     }, done: d => modelsUsed(d) <= 2, progress: d => tr(`${modelsUsed(d)} models`, `${modelsUsed(d)} modell`) },
   { id: 'perRequest', get text() {
-      return tr('keep the average request under $0.15', 'egy kérés átlagosan $0.15 alatt legyen')
-    }, done: d => perRequest(d) < 0.15, progress: d => tr(`$${perRequest(d).toFixed(2)}/request`, `$${perRequest(d).toFixed(2)}/kérés`) },
+      return isTokens() ? tr('keep the average request under 30k weighted tokens', 'egy kérés átlagosan 30k súlyozott token alatt legyen') : tr('keep the average request under $0.15', 'egy kérés átlagosan $0.15 alatt legyen')
+    }, done: d => perRequest(d) < (isTokens() ? 30_000 : 0.15), progress: d => tr(`${amount(perRequest(d))}/request`, `${amount(perRequest(d))}/kérés`) },
 ]
 
 /** The day's quest, the same for everyone on that day. */

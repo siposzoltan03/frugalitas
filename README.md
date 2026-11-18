@@ -3,7 +3,7 @@
 *Frugalitas* is Latin for thrift: tokens are not infinite.
 
 A Claude Code plugin that watches what you spend through a LiteLLM proxy (pay-as-you-go), using the proxy's own
-spend bookkeeping. It is active only in sessions that run through LiteLLM (`ANTHROPIC_BASE_URL` +
+spend bookkeeping. On a Claude subscription it counts tokens instead (see [Subscription mode](#subscription-mode-tokens-instead-of-dollars)). It is active only in sessions that run through LiteLLM (`ANTHROPIC_BASE_URL` +
 `ANTHROPIC_AUTH_TOKEN`, optionally `ANTHROPIC_CUSTOM_HEADERS`); anywhere else it stays silent.
 
 ![Every skin in every mood](docs/sprites.png)
@@ -29,6 +29,34 @@ spend bookkeeping. It is active only in sessions that run through LiteLLM (`ANTH
   budget, quips, and what your spend would have bought (coffees, pizzas, concert tickets…).
 
 All days are UTC days, as LiteLLM counts them.
+
+## Subscription mode (tokens instead of dollars)
+
+On a Claude subscription there is no proxy and no bill, so Frugalitas counts tokens. Set `billing` in `/config`:
+`litellm` (default, as before), `subscription`, or `auto` (LiteLLM when the session runs through a proxy, else
+subscription).
+
+- **Weighted tokens:** each turn (subagents included) counts input 1×, output 5×, cache read 0.1×, cache write 1.25×
+  (2× with the 1 h cache), which is roughly how subscription limits drain. Amounts show as `340k` / `1.2M`.
+- **Scopes:** session, the rolling **5 h window** and the rolling **week**, with budgets `sessionTokensM`,
+  `windowTokensM` and `weeklyTokensM` (millions of weighted tokens, 0 = none). The 5 h window is approximated as the last
+  five clock hours, not anchored to your first prompt.
+- **Data:** a local ledger of hourly buckets in the plugin store, shared by every session. It only sees turns of sessions
+  where the plugin runs, and is kept for 40 days.
+- **Same:** status line, budget toasts, `block` / `/frugal allow`, `/frugal` report (daily bars, per-model share, cache hit),
+  dashboard, prompt-cache countdown and warnings.
+- **API price:** every turn is also priced at Anthropic's API list prices. At session start the plugin loads them from
+  LiteLLM's public price file (`model_prices_and_context_window.json` on GitHub, a community-maintained copy;
+  cached for a day, nothing about you is sent); offline or on an error it falls back to a built-in table by model family. The status line ends with `API ≈$42/wk`, the report adds `≈$` per day and model plus a
+  total ("at API prices that would be ≈$…"), and the dashboard shows the week and the 5 h window. Cache-expiry
+  and compact/restart advice is priced the same way.
+- **Real limits:** Claude Code reports your subscription's own 5 h and 7 d windows (percent used, reset time). They show
+  in the status line (`⏱ 5h 24% ↻2h14m · 7d 7%`), on the dashboard as gauges and at the end of `/frugal`, with a toast
+  at 80% and 100% of each window. They are Anthropic's figures; the token budgets above are your own.
+- **Coins and quests:** there is no daily budget, so a seventh of the weekly one stands in for it; the quests that
+  named dollars use weighted tokens instead (average request under 30k).
+- **Still off** (they need LiteLLM's own history): the forecast, the Opus-share / dear-weekday / failed-request tips, "in kind",
+  the expensive-turn toast and the outdated-model roast.
 
 ## Modes: Frugalitas and Fukarléc
 

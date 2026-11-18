@@ -1,12 +1,23 @@
 {
   "name": "frugalitas",
-  "version": "0.3.0",
-  "description": "Frugalitas: LiteLLM pay-as-you-go cost monitor — status line, budget guard, /frugal report, savings tips, coins and a shop. Two modes: Frugalitas (English) and Fukarléc (Hungarian).",
+  "version": "0.4.0",
+  "description": "Frugalitas: cost monitor for Claude Code — LiteLLM pay-as-you-go dollars, or token counting with API-equivalent prices and real rate limits on a Claude subscription. Status line, budget guard, /frugal report, savings tips, coins and a shop. Two modes: Frugalitas (English) and Fukarléc (Hungarian).",
   "author": {
     "name": "Zoltán Sipos"
   },
   "types": "./types/index.d.ts",
   "userConfig": {
+    "billing": {
+      "type": "string",
+      "title": "Billing",
+      "description": "litellm: watch the LiteLLM proxy's dollars (silent elsewhere); subscription: count weighted tokens locally, for a Claude subscription; auto: litellm when the session runs through a proxy, else subscription.",
+      "options": [
+        "litellm",
+        "subscription",
+        "auto"
+      ],
+      "default": "litellm"
+    },
     "sessionBudget": {
       "type": "number",
       "title": "Session budget (USD)",
@@ -24,6 +35,24 @@
       "title": "Monthly budget (USD)",
       "description": "Monthly budget in dollars. 0 = none.",
       "default": 800
+    },
+    "sessionTokensM": {
+      "type": "number",
+      "title": "Subscription: session budget (M tokens)",
+      "description": "Subscription mode: weighted tokens (millions) for one session. 0 = none.",
+      "default": 0
+    },
+    "windowTokensM": {
+      "type": "number",
+      "title": "Subscription: 5-hour window budget (M tokens)",
+      "description": "Subscription mode: weighted tokens (millions) in the rolling 5-hour window. 0 = none.",
+      "default": 0
+    },
+    "weeklyTokensM": {
+      "type": "number",
+      "title": "Subscription: weekly budget (M tokens)",
+      "description": "Subscription mode: weighted tokens (millions) in the rolling 7 days. 0 = none.",
+      "default": 0
     },
     "overBudget": {
       "type": "string",

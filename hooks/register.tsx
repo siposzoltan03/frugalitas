@@ -3,6 +3,8 @@ import type { Register } from 'claude-code'
 
 import { addMetrics, emptyMetrics, fetchActivity, fetchKeySpend, fetchPrices, makeConn, priceFor } from './litellm'
 import type { Activity, Conn, Day, Fetch, Metrics, Prices } from './litellm'
+import { apiCost, apiModels, apiPriceFor, loadLivePrices, loadLocal, recordUsage, unitPrices } from './subscription'
+import type { ApiCost } from './subscription'
 import type { Handover, TokenUsage } from './advice'
 import {
   cacheExpiryWarning,
@@ -49,7 +51,10 @@ import {
   addDays,
   colorDotRasterCells,
   gaugeRasterCells,
+  amount,
   inKind,
+  isTokens,
+  limitsText,
   MODEL_COLORS,
   modelBarRasterCells,
   money,
@@ -57,6 +62,7 @@ import {
   ratios,
   report,
   SCOPE_NAMES,
+  setUnit,
   sparklineRasterCells,
   statusLine,
   streak,
@@ -64,7 +70,7 @@ import {
   utcDate,
   worst,
 } from './format'
-import type { Budgets, Scope, Spend } from './format'
+import type { Budgets, Limit, Scope, Spend } from './format'
 import type { AdviceView, SnapshotState, TurnCost, XpView } from '../types'
 import { asMode, cmd, MODES, mode, setMode, tr } from './mode'
 import { MASCOT_COLUMNS, MASCOT_ROWS, mascotMood, mascotRasterCells } from './mascot'
@@ -83,7 +89,7 @@ const PANE_ID = 'frugal-dashboard'
 const MAX_HANDOVER_CHARS = 560_000
 const TURN_DISPLAY_MS = 8_000
 
-type Snapshot = { at: number; keySpend: number; today: Day | undefined; activity: Activity; date: string }
+type Snapshot = { at: number; keySpend: number; today: Day | undefined; activity: Activity; date: string; window?: number; week?: number; api?: ApiCost }
 type Stamped = { at: number; [k: string]: unknown }
 
 type Io = {
@@ -130,11 +136,18 @@ const FUKARLEC_IMPORTED = 'fukarlecImported'
 const xpView = (l: Ledger): XpView => ({ ...worn(l), earned: earned(l), balance: balance(l) })
 
 export const register: Register = (on, options) => {
-  const budgets: Budgets = {
+  const usdBudgets: Budgets = {
     session: Number(options.sessionBudget ?? 0),
     daily: Number(options.dailyBudget ?? 0),
     monthly: Number(options.monthlyBudget ?? 0),
   }
+  // Subscription mode: budgets in millions of weighted tokens — per session, per rolling 5 h window, per rolling week.
+  const tokenBudgets: Budgets = {
+    session: Number(options.sessionTokensM ?? 0) * 1e6,
+    daily: Number(options.windowTokensM ?? 0) * 1e6,
+    monthly: Number(options.weeklyTokensM ?? 0) * 1e6,
+  }
+  let budgets = usdBudgets
   const isBlocking = options.overBudget === 'block'
   const isFun = options.fun !== false
   const hufRate = Number(options.hufRate ?? 350)
@@ -142,6 +155,11 @@ export const register: Register = (on, options) => {
 
   let io: Io | undefined
   let conn: Conn | undefined
+  // Subscription mode: no proxy; tokens are counted in a local ledger instead of read from LiteLLM.
+  let subscription = false
+  // The subscription's own rate-limit windows (5 h, 7 d) as Claude Code last reported them; empty off a subscription.
+  let limits: Limit[] = []
+  const active = () => conn !== undefined || subscription
   let sessionId = ''
   let baseline: number | undefined
   let snap: Snapshot | undefined
@@ -193,18 +211,32 @@ export const register: Register = (on, options) => {
       } catch {}
     })
 
+  /** The ledger's days from `start` on, with their own total. */
+  const subscriptionActivity = (a: Activity, start: string): Activity => {
+    const days = a.days.filter(d => d.date >= start)
+    return { days, total: days.reduce((t, d) => addMetrics(t, d.metrics), emptyMetrics()) }
+  }
+
+  /** The budget coins, quests and streaks measure a day against; subscription mode has none, so a seventh of the weekly one. */
+  const dailyBudget = () => (subscription ? budgets.monthly / 7 : budgets.daily)
+
+  const store = ($io: Io) => ({ get: $io.get, set: $io.set, keys: $io.keys })
+
   const keyDelta = (s: Snapshot) => Math.max(0, s.keySpend - (baseline ?? s.keySpend))
 
-  const spendOf = (s: Snapshot): Spend => ({
+  const spendOf = (s: Snapshot): Spend =>
+    subscription
+      ? { session: sessionCost, today: s.window ?? 0, month: s.week ?? 0 }
+      : {
     session: sessionCost,
     today: s.today?.metrics.spend ?? 0,
     month: s.activity.total.spend,
-  })
+      }
 
   function showStatus($io: Io) {
-    if (!conn) return $io.status(undefined)
+    if (!active()) return $io.status(undefined)
     if (!snap) return $io.status(lastError ? `🪙 ⚠︎ ${lastError}` : '🪙 …')
-    $io.status(statusLine(spendOf(snap), budgets, isFun, lastError !== undefined) + cacheSuffix())
+    $io.status(statusLine(spendOf(snap), budgets, isFun, lastError !== undefined, snap.api?.week, limitsText(limits, nowMs)) + cacheSuffix())
   }
 
   /** ` · ⏳ cache 3:42` after a turn; nothing before the first turn or while one runs. */
@@ -240,6 +272,10 @@ export const register: Register = (on, options) => {
   async function load($io: Io): Promise<Snapshot> {
     const now = await $io.now()
     const date = utcDate(now)
+    if (subscription) {
+      const local = await loadLocal(store($io), now)
+      return { at: now, keySpend: 0, activity: local.activity, date, today: local.activity.days.find(d => d.date === date), window: local.window, week: local.week, api: local.api }
+    }
     const fetch = $io.fetch
     const [keySpend, activity] = await Promise.all([
       fetchKeySpend(fetch, conn!),
@@ -249,7 +285,7 @@ export const register: Register = (on, options) => {
   }
 
   async function refresh($io: Io, force = false): Promise<Snapshot | undefined> {
-    if (!conn) return undefined
+    if (!active()) return undefined
     if (inflight && !force) return inflight
     if (inflight) await inflight
     if (snap && !force && (await $io.now()) - snap.at < MIN_REFRESH_MS) return snap
@@ -299,13 +335,13 @@ export const register: Register = (on, options) => {
               pack().over,
               {
                 scope: SCOPE_NAMES[scope],
-                spent: money(spentBy[scope]),
-                budget: money(budgets[scope]),
+                spent: amount(spentBy[scope]),
+                budget: amount(budgets[scope]),
                 kind: inKind(spentBy[scope], hufRate),
               },
               s.at,
             )
-          : tr(`frugal: ${SCOPE_NAMES[scope]} budget exceeded (${money(spentBy[scope])}/${money(budgets[scope])})`, `fukarléc: ${SCOPE_NAMES[scope]} keret túllépve (${money(spentBy[scope])}/${money(budgets[scope])})`)
+          : tr(`frugal: ${SCOPE_NAMES[scope]} budget exceeded (${amount(spentBy[scope])}/${amount(budgets[scope])})`, `fukarléc: ${SCOPE_NAMES[scope]} keret túllépve (${amount(spentBy[scope])}/${amount(budgets[scope])})`)
         $io.toast(text, 12_000)
         $io.notify(text)
         if (isBlocking) $io.toast(tr('🔒 New prompts are blocked until /frugal allow.', '🔒 Új prompt csak /fukarlec allow után.'), 12_000)
@@ -357,7 +393,7 @@ export const register: Register = (on, options) => {
             .map(([d, xp]) => `${d.slice(5)} ${xp > 0 ? `+${xp + (l.quests[d] ?? 0)}${l.quests[d] ? '🎯' : ''}` : '0 🔥'}`)
             .join(' · ')}`
         : tr('No credited days yet: coins are paid for closed (UTC) days.', 'Még nincs jóváírt nap: a lezárt (UTC) napokért jár garas.'),
-      tr(`Rule: an active day within the daily budget (${money(budgets.daily)}) = 10 + up to 10 for thrift + streak bonus (up to +10);`, `Szabály: napi keret (${money(budgets.daily)}) alatti aktív nap = 10 + max 10 a spórolásért + sorozat-bónusz (max +10),`),
+      tr(`Rule: an active day within the daily budget (${amount(dailyBudget())}) = 10 + up to 10 for thrift + streak bonus (up to +10);`, `Szabály: napi keret (${amount(dailyBudget())}) alatti aktív nap = 10 + max 10 a spórolásért + sorozat-bónusz (max +10),`),
       tr(`a completed daily quest +${QUEST_XP}.`, `a teljesített napi küldetés +${QUEST_XP}.`),
       ...(snap ? [questLine(snap) ?? ''] : []),
     ].join('\n')
@@ -400,10 +436,11 @@ export const register: Register = (on, options) => {
     let l = await loadLedger($io, s)
     const from = creditFrom(l)
     const to = addDays(s.date, -1)
-    if (budgets.daily > 0 && from <= to) {
+    // Subscription mode has no daily budget: a seventh of the weekly one stands in for it.
+    if (dailyBudget() > 0 && from <= to) {
       try {
-        const activity = await fetchActivity($io.fetch, conn!, from, to)
-        const result = credit(l, activity.days, s.date, budgets.daily)
+        const activity = subscription ? subscriptionActivity(s.activity, from) : await fetchActivity($io.fetch, conn!, from, to)
+        const result = credit(l, activity.days, s.date, dailyBudget())
         l = result.ledger
         if (result.gained > 0) {
           const quests = result.quests.length > 0 ? tr(` 🎯 (${result.quests.length} quest${result.quests.length > 1 ? 's' : ''})`, ` 🎯 (${result.quests.length} küldetés)`) : ''
@@ -455,14 +492,23 @@ export const register: Register = (on, options) => {
   }
 
   function questLine(s: Snapshot): string | undefined {
-    if (budgets.daily <= 0) return undefined
+    if (dailyBudget() <= 0) return undefined
     const q = questFor(s.date)
-    const sofar = s.today ? tr(` · so far ${q.progress(s.today)} ${q.done(s.today, budgets.daily) ? '✅' : '❌'}`, ` · eddig ${q.progress(s.today)} ${q.done(s.today, budgets.daily) ? '✅' : '❌'}`) : ''
+    const sofar = s.today ? tr(` · so far ${q.progress(s.today)} ${q.done(s.today, dailyBudget()) ? '✅' : '❌'}`, ` · eddig ${q.progress(s.today)} ${q.done(s.today, dailyBudget()) ? '✅' : '❌'}`) : ''
     return tr(`🎯 Today's quest: ${q.text} (+${QUEST_XP} coins)${sofar}`, `🎯 Mai küldetés: ${q.text} (+${QUEST_XP} garas)${sofar}`)
   }
 
   /** The advice that rests on LiteLLM's numbers, freshest first. */
   async function adviceFor($io: Io, s: Snapshot): Promise<AdviceView> {
+    if (subscription) {
+      // Only what needs no dollar history: the expired-cache advice (priced at API list prices) and the quest.
+      const expired =
+        cacheWarmSinceAt > 0 && !isTurnRunning && nowMs > cacheWarmSinceAt + cacheTtl
+          ? clearOrRewriteTip(lastContextTokens, baseContextTokens, priceOf(lastModel), estimateRestart(lastContextTokens, lastModel))
+          : undefined
+      const list = expired ? [expired] : []
+      return { tips: isFun ? list.map((t, i) => voice(t, pack(), Number(s.date.slice(8)) + i)) : list, quest: questLine(s) ?? null }
+    }
     await loadExtras($io, s)
     const lastActive = s.today ?? s.activity.days.filter(d => d.metrics.spend > 0).at(-1)
     const list = [
@@ -498,6 +544,17 @@ export const register: Register = (on, options) => {
 
   /** Prices a turn's tokens into the session's spend; without the model's price, it waits for it. */
   async function addUsage($io: Io, model: string, usage: TokenUsage): Promise<number> {
+    if (subscription) {
+      const weighted = weightedTokens(usage, unitPrices(cacheTtl > 5 * 60_000))
+      const now = await $io.now()
+      sessionCost += weighted
+      if (sessionId) await $io.set(`sessionCost:${sessionId}`, { at: now, usd: sessionCost })
+      const apiPrice = apiPriceFor(model)
+      const usd = apiPrice ? apiCost(usage, apiPrice, cacheTtl > 5 * 60_000) : 0
+      await recordUsage(store($io), now, model, usage, weighted, usd)
+      showStatus($io)
+      return weighted
+    }
     if (!priceOf(model)) await ensurePrices($io)
     const price = priceOf(model)
     if (!price) {
@@ -588,7 +645,24 @@ export const register: Register = (on, options) => {
       apiKey: await $.env.get('ANTHROPIC_API_KEY'),
       customHeaders: await $.env.get('ANTHROPIC_CUSTOM_HEADERS'),
     })
-    if (conn) {
+    const billing = String(options.billing ?? 'litellm')
+    if (billing === 'subscription') conn = undefined
+    subscription = billing === 'subscription' || (billing === 'auto' && conn === undefined)
+    setUnit(subscription ? 'tokens' : 'usd')
+    budgets = subscription ? tokenBudgets : usdBudgets
+    if (subscription) {
+      prices = apiModels()
+      // Today's list prices from LiteLLM's public price file (cached a day); the built-in table stands in until then.
+      const $io = io
+      background(
+        loadLivePrices(store($io), url => $io.fetch(url), await $.clock.now()).then(source => {
+          prices = apiModels()
+          $io.debug(`frugalitas: API prices ${source}`)
+        }),
+      )
+    }
+    limits = ((await $.session.usage().catch(() => undefined))?.rateLimits ?? []) as Limit[]
+    if (active()) {
       const $io = io
       sessionId = await $.session.id()
       const keptCost = await $io.get(`sessionCost:${sessionId}`)
@@ -611,6 +685,7 @@ export const register: Register = (on, options) => {
             activity: s.activity,
             date: s.date,
             stale: false,
+            api: s.api && { week: s.api.week, window: s.api.window },
           }))
           const view = await creditXp($io, s)
           await update($, xpAtom, () => view)
@@ -631,6 +706,7 @@ export const register: Register = (on, options) => {
               activity: s.activity,
               date: s.date,
               stale: lastError !== undefined,
+              api: s.api && { week: s.api.week, window: s.api.window },
             }))
             const view = await creditXp($io, s)
             await update($, xpAtom, () => view)
@@ -642,6 +718,34 @@ export const register: Register = (on, options) => {
     }
     return next(e)
   })
+
+  // --- session.measure: the subscription's own limits --------------------------------
+
+  /** A toast at 80% and 100% of each rate-limit window, once per window (a window's reset starts a new one). */
+  async function checkLimits($io: Io) {
+    const now = await $io.now()
+    for (const l of limits) {
+      const level = l.percentUsed >= 100 ? 2 : l.percentUsed >= 80 ? 1 : 0
+      if (level === 0) continue
+      const key = `warned:limit:${l.kind}:${l.resetsAt ?? ''}`
+      if (level <= Number((await $io.get(key))?.level ?? 0)) continue
+      await $io.set(key, { at: now, level })
+      const text = limitsText([l], now)
+      $io.toast(level === 2 ? tr(`⛔ Subscription limit reached: ${text}`, `⛔ Előfizetési limit elfogyott: ${text}`) : tr(`⏱ Subscription limit at 80%+: ${text}`, `⏱ Előfizetési limit 80% fölött: ${text}`), level === 2 ? 12_000 : 8000)
+      if (level === 2) $io.notify(text)
+    }
+  }
+
+  on('session.measure', async ($, e, next) => {
+    limits = e.rateLimits ?? []
+    if (io && active()) {
+      nowMs = await $.clock.now()
+      showStatus(io)
+      io.redraw()
+      background(checkLimits(io))
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
 
   // --- turn.complete -----------------------------------------------------------
 
@@ -670,14 +774,14 @@ export const register: Register = (on, options) => {
       if (io && sessionId) void io.set(`turnEnd:${sessionId}`, { at: cacheWarmSinceAt, base: baseContextTokens }).catch(() => {})
     }
     const u = e.usage
-    if (u && io && conn) {
+    if (u && io && active()) {
       turnSpend += await addUsage(io, u.model, {
         input: u.input_tokens,
         output: u.output_tokens,
         cacheRead: u.cache_read_input_tokens,
         cacheWrite: u.cache_creation_input_tokens,
       })
-      if (e.agentId === undefined && expensiveTurn > 0 && turnSpend >= expensiveTurn) {
+      if (e.agentId === undefined && !subscription && expensiveTurn > 0 && turnSpend >= expensiveTurn) {
         const cost = turnSpend
         io.toast(isFun ? say(pack().turn, { cost: money(cost), kind: inKind(cost, hufRate) }, nowMs) : tr(`Expensive turn: +${money(cost)}`, `Drága kör: +${money(cost)}`), 8000)
         await update($, lastTurnAtom, () => ({ cost, inputTokens: u.input_tokens, outputTokens: u.output_tokens, at: nowMs }))
@@ -689,10 +793,10 @@ export const register: Register = (on, options) => {
       if (e.agentId === undefined) mainTokens += tokens
       else subTokens += tokens
     }
-    if (conn && io && e.agentId === undefined) {
+    if (active() && io && e.agentId === undefined) {
       const $io = io
       const cacheWrite = e.usage?.cache_creation_input_tokens ?? 0
-      const price = u && priceOf(u.model)
+      const price = u && (subscription ? unitPrices(false) : priceOf(u.model))
       if (u && price) {
         const weight = weightedTokens(
           { input: u.input_tokens, output: u.output_tokens, cacheRead: u.cache_read_input_tokens, cacheWrite: u.cache_creation_input_tokens },
@@ -725,10 +829,11 @@ export const register: Register = (on, options) => {
             activity: s.activity,
             date: s.date,
             stale: lastError !== undefined,
+            api: s.api && { week: s.api.week, window: s.api.window },
           }))
           const advice = await adviceFor($io, s)
           await update($, adviceAtom, () => advice)
-          const tip = tips(s.today, cacheWrite).find(t => !toldTips.has(`${s.date}:${t.slice(0, 2)}`))
+          const tip = subscription ? undefined : tips(s.today, cacheWrite).find(t => !toldTips.has(`${s.date}:${t.slice(0, 2)}`))
           if (tip) await offerTip($io, `${s.date}:${tip.slice(0, 2)}`, tip)
         }))
       })
@@ -740,7 +845,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    if (!conn || !io || e.agentId !== undefined || ran.deny !== undefined) return ran
+    if (!active() || !io || e.agentId !== undefined || ran.deny !== undefined) return ran
     const chars = (ran.text ?? JSON.stringify(ran.result ?? '')).length
     if (e.tool === 'Read') {
       const count = (readCounts.get(e.file_path) ?? 0) + 1
@@ -770,7 +875,7 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     // An expired cache, said before the turn pays for it.
-    if (conn && io && cacheWarmSinceAt > 0 && e.origin.kind === 'composer') {
+    if (active() && io && cacheWarmSinceAt > 0 && e.origin.kind === 'composer') {
       const idle = (await $.clock.now()) - cacheWarmSinceAt
       const model = await $.session.model()
       const restart = estimateRestart(lastContextTokens, model)
@@ -793,7 +898,7 @@ export const register: Register = (on, options) => {
         io.toast(roast, 15_000)
       }
     }
-    if (!isBlocking || !conn || !snap || (e.origin.kind !== 'composer' && e.origin.kind !== 'bridge')) return next(e)
+    if (!isBlocking || !active() || !snap || (e.origin.kind !== 'composer' && e.origin.kind !== 'bridge')) return next(e)
     const over = overScopes()
     if (over.length === 0 || (await $.store.get(`unlock:${snap.date}`)) !== undefined) return next(e)
     const names = over.map(s => SCOPE_NAMES[s]).join(', ')
@@ -810,13 +915,13 @@ export const register: Register = (on, options) => {
       if (!next) return { text: tr(`Mode: ${mode()}. Switch: /frugal mode ${MODES.join(' | ')}`, `Mód: ${mode()}. Váltás: /fukarlec mode ${MODES.join(' | ')}`) }
       setMode(next)
       await $.store.set(MODE_KEY, { mode: next, updatedAt: await $.clock.now() })
-      if (io && conn) await refresh(io, true).catch(() => undefined)
+      if (io && active()) await refresh(io, true).catch(() => undefined)
       if (ledger) await update($, xpAtom, () => xpView(ledger!))
       await $.ui.invalidate('ui.render')
       return { text: tr('🪙 Frugalitas mode: English, Old Penny, prices in kind in USD.', '🪙 Fukarléc mód: magyarul, Fukar bácsival, lángosban számolva.') }
     }
     const $io = io
-    if (!conn || !$io) {
+    if (!active() || !$io) {
       return {
         text: tr('Frugalitas: this session is not running through a LiteLLM proxy (no ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), so there is nothing to watch.', 'Fukarléc: ez a session nem LiteLLM proxyn fut (nincs ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN), nincs mit figyelni.'),
       }
@@ -860,7 +965,7 @@ export const register: Register = (on, options) => {
             ],
           ),
           '',
-          tr(`Budgets: session ${money(budgets.session)}, daily ${money(budgets.daily)}, monthly ${money(budgets.monthly)} · mode: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`, `Keretek: session ${money(budgets.session)}, napi ${money(budgets.daily)}, havi ${money(budgets.monthly)} · mód: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`),
+          isTokens() ? tr(`Budgets (weighted tokens): session ${amount(budgets.session)}, 5h window ${amount(budgets.daily)}, weekly ${amount(budgets.monthly)} · mode: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`, `Keretek (súlyozott token): session ${amount(budgets.session)}, 5 órás ablak ${amount(budgets.daily)}, heti ${amount(budgets.monthly)} · mód: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`) : tr(`Budgets: session ${money(budgets.session)}, daily ${money(budgets.daily)}, monthly ${money(budgets.monthly)} · mode: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`, `Keretek: session ${money(budgets.session)}, napi ${money(budgets.daily)}, havi ${money(budgets.monthly)} · mód: ${isBlocking ? 'block' : 'warn'} (/config → frugalitas)`),
         ].join('\n'),
       }
     }
@@ -942,7 +1047,7 @@ export const register: Register = (on, options) => {
     if (verb === 'tips' || verb === 'tip') {
       const advice = await adviceFor($io, s)
       await update($, adviceAtom, () => advice)
-      const quest = budgets.daily > 0 ? questLine(s) : undefined
+      const quest = dailyBudget() > 0 ? questLine(s) : undefined
       return {
         text: [
           tr('💡 Savings tips', '💡 Spórolási tippek'),
@@ -955,7 +1060,7 @@ export const register: Register = (on, options) => {
       const view = await creditXp($io, s)
       await update($, xpAtom, () => view)
       const l = ledger!
-      if (budgets.daily <= 0) return { text: tr('Frugalitas: coins need a daily budget (/config → frugalitas → Daily budget).', 'Fukarléc: XP csak napi kerettel jár (/config → fukarlec → napi keret).') }
+      if (dailyBudget() <= 0) return { text: tr('Frugalitas: coins need a daily budget (/config → frugalitas → Daily budget).', 'Fukarléc: XP csak napi kerettel jár (/config → fukarlec → napi keret).') }
 
       if (verb === 'xp') return { text: xpText(l) }
       if (verb === 'shop') return { text: shopText(l) }
@@ -987,19 +1092,22 @@ export const register: Register = (on, options) => {
       activity: s.activity,
       date: s.date,
       stale: false,
+      api: s.api && { week: s.api.week, window: s.api.window },
     }))
 
     if (arg === 'refresh') {
-      return { text: statusLine(spendOf(s), budgets, isFun, false) }
+      return { text: statusLine(spendOf(s), budgets, isFun, false, s.api?.week, limitsText(limits, nowMs)) }
     }
 
-    const fetch = $io.fetch
+    limits = ((await $.session.usage().catch(() => undefined))?.rateLimits ?? limits) as Limit[]
     const days = /^\d+$/.test(arg) ? Math.min(92, Math.max(1, Number(arg))) : 0
     const start = days > 0 ? addDays(s.date, -(days - 1)) : `${s.date.slice(0, 7)}-01`
-    const activity = days > 0 ? await fetchActivity(fetch, conn, start, s.date) : s.activity
-    const history = budgets.daily > 0 ? await fetchActivity(fetch, conn, addDays(s.date, -60), s.date) : undefined
+    const activity: Activity = subscription
+      ? subscriptionActivity(s.activity, start)
+      : days > 0 ? await fetchActivity($io.fetch, conn!, start, s.date) : s.activity
+    const history = dailyBudget() > 0 ? (subscription ? s.activity : await fetchActivity($io.fetch, conn!, addDays(s.date, -60), s.date)) : undefined
 
-    const parallel = parallelUseTip(sessionCost, keyDelta(s))
+    const parallel = subscription ? undefined : parallelUseTip(sessionCost, keyDelta(s))
     return {
       text: report({
         title: days > 0 ? tr(`🪙 Frugalitas – last ${days} days (${start} → ${s.date}, UTC)`, `🪙 Fukarléc – utolsó ${days} nap (${start} → ${s.date}, UTC)`) : tr(`🪙 Frugalitas – ${s.date.slice(0, 7)}`, `🪙 Fukarléc – ${s.date.slice(0, 7)}`),
@@ -1009,8 +1117,9 @@ export const register: Register = (on, options) => {
         todayDate: s.date,
         fun: isFun,
         hufRate,
-        streakDays: history ? streak(history.days, s.date, budgets.daily) : 0,
-      }) + (parallel ? `\n\n${parallel}` : ''),
+        streakDays: history ? streak(history.days, s.date, dailyBudget()) : 0,
+        api: subscription ? s.api && { ...s.api, total: Object.entries(s.api.days).filter(([d]) => d >= start).reduce((n, [, v]) => n + v, 0) } : undefined,
+      }) + (parallel ? `\n\n${parallel}` : '') + (limits.length > 0 ? `\n\n⏱ ${tr('Subscription limits', 'Előfizetési limitek')}: ${limitsText(limits, await $.clock.now())}` : ''),
     }
     })
   }
@@ -1041,7 +1150,7 @@ export const register: Register = (on, options) => {
     if (!state) {
       return (
         <Box flexDirection="column">
-          <Text dimColor>{conn ? tr('🪙 Loading...', '🪙 Betöltés...') : tr('🪙 No LiteLLM connection', '🪙 Nincs LiteLLM kapcsolat')}</Text>
+          <Text dimColor>{active() ? tr('🪙 Loading...', '🪙 Betöltés...') : tr('🪙 No LiteLLM connection', '🪙 Nincs LiteLLM kapcsolat')}</Text>
         </Box>
       )
     }
@@ -1053,8 +1162,8 @@ export const register: Register = (on, options) => {
 
     const scopes: { label: string; spent: number; budget: number }[] = [
       { label: 'Session', spent: spend.session, budget: budgets.session },
-      { label: tr('Today  ', 'Ma     '), spent: spend.today, budget: budgets.daily },
-      { label: tr('Month  ', 'Hónap  '), spent: spend.month, budget: budgets.monthly },
+      { label: isTokens() ? '5h     ' : tr('Today  ', 'Ma     '), spent: spend.today, budget: budgets.daily },
+      { label: isTokens() ? tr('Week   ', 'Hét    ') : tr('Month  ', 'Hónap  '), spent: spend.month, budget: budgets.monthly },
     ]
 
     const models = new Map<string, Metrics>()
@@ -1080,7 +1189,7 @@ export const register: Register = (on, options) => {
       ? Math.round((activity.total.cacheRead / activity.total.promptTokens) * 100)
       : 0
 
-    const streakDays = budgets.daily > 0 ? streak(activity.days, date, budgets.daily) : 0
+    const streakDays = dailyBudget() > 0 ? streak(activity.days, date, dailyBudget()) : 0
 
     const todayDay = activity.days.find(d => d.date === date)
     const todayTips = todayDay ? tips(todayDay, 0) : []
@@ -1102,7 +1211,7 @@ export const register: Register = (on, options) => {
             <Box key={`scope-${s.label}`}>
               <Text dimColor>{s.label} </Text>
               <Raster key={`gauge-${s.label}`} columns={gaugeWidth} rows={1} cells={gaugeRasterCells(gaugeWidth, r)} />
-              <Text> {money(s.spent)}/{money(s.budget)}</Text>
+              <Text> {amount(s.spent)}/{amount(s.budget)}</Text>
             </Box>
           )
         })}
@@ -1114,7 +1223,7 @@ export const register: Register = (on, options) => {
             key="pane-spark"
             columns={sparkCols}
             rows={sparkRows}
-            cells={sparklineRasterCells(paneSparkValues, sparkCols, sparkRows, budgets.daily)}
+            cells={sparklineRasterCells(paneSparkValues, sparkCols, sparkRows, dailyBudget())}
           />
         )}
         {sparkDays.length > 0 && (
@@ -1139,11 +1248,16 @@ export const register: Register = (on, options) => {
           return (
             <Box key={`model-${i}`}>
               <Raster key={`dot-${i}`} columns={1} rows={1} cells={colorDotRasterCells(dotColor)} />
-              <Text dimColor> {short} {money(m.spend)} ({pct}%)</Text>
+              <Text dimColor> {short} {amount(m.spend)} ({pct}%)</Text>
             </Box>
           )
         })}
 
+        {limits.map(l => (
+          <Text key={l.kind} color={l.percentUsed >= 80 ? '#ef4444' : undefined} dimColor={l.percentUsed < 80}>
+            {tr('Limit', 'Limit')} {limitsText([l], nowMs)} {progressBar(Math.min(1, l.percentUsed / 100), 10)}
+          </Text>
+        ))}
         <Text> </Text>
         <Text dimColor>{modelLine(sessionModel, priceOf(sessionModel))}</Text>
         {contextWindow > 0 && (
@@ -1152,10 +1266,12 @@ export const register: Register = (on, options) => {
           </Text>
         )}
         <Text dimColor>
-          {tr(
-            `Cache (month): ${cacheHit}% hit, ${money(activity.total.cacheSaved)} saved`,
-            `Cache (hó): ${cacheHit}% hit, ${money(activity.total.cacheSaved)} megtakarítás`,
-          )}
+          {isTokens()
+            ? tr(`Cache: ${cacheHit}% hit`, `Cache: ${cacheHit}% találat`)
+            : tr(
+                `Cache (month): ${cacheHit}% hit, ${money(activity.total.cacheSaved)} saved`,
+                `Cache (hó): ${cacheHit}% hit, ${money(activity.total.cacheSaved)} megtakarítás`,
+              )}
         </Text>
         {cacheWarmSinceAt === 0 && !isTurnRunning && <Text dimColor>{tr('⏳ Cache: starts when the next turn ends', '⏳ Cache: az első kör végén indul')}</Text>}
         {isTurnRunning && <Text dimColor>{tr('⏳ Cache: fresh (turn running)', '⏳ Cache: friss (fut a kör)')}</Text>}
@@ -1179,7 +1295,8 @@ export const register: Register = (on, options) => {
             {tr('(new task: /clear)', '(új feladatnál /clear)')}
           </Text>
         )}
-        <Text dimColor>{tr(`Total: ${money(totalSpend)} · ${activity.total.requests} requests`, `Összesen: ${money(totalSpend)} · ${activity.total.requests} kérés`)}</Text>
+        <Text dimColor>{tr(`Total: ${amount(totalSpend)} · ${activity.total.requests} requests`, `Összesen: ${amount(totalSpend)} · ${activity.total.requests} kérés`)}</Text>
+        {subscription && state.api !== undefined && <Text dimColor>{tr(`API price: ≈${money(state.api.week)} this week · ≈${money(state.api.window)} in 5h`, `API áron: ≈${money(state.api.week)} a héten · ≈${money(state.api.window)} 5 óra alatt`)}</Text>}
 
         {isFun && (
           <Box flexDirection="column">
@@ -1208,7 +1325,7 @@ export const register: Register = (on, options) => {
             )}
           </Box>
         )}
-        {isFun && xp && budgets.daily > 0 && (() => {
+        {isFun && xp && dailyBudget() > 0 && (() => {
           const r = rankOf(xp.earned)
           return (
             <Text dimColor>

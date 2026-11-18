@@ -6,6 +6,8 @@ export type SnapshotState = {
   }
   date: string
   stale: boolean
+  /** Subscription mode: the week and the 5 h window at API list prices, in dollars. */
+  api?: { week: number; window: number }
 }
 
 export type TurnCost = {

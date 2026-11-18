@@ -1,12 +1,12 @@
 {
   "name": "frugalitas",
-  "description": "Frugalitas: a LiteLLM cost monitor plugin for Claude Code.",
+  "description": "Frugalitas: a cost and token monitor plugin for Claude Code (LiteLLM or subscription).",
   "owner": { "name": "Zoltán Sipos" },
   "plugins": [
     {
       "name": "frugalitas",
       "source": "./",
-      "description": "LiteLLM pay-as-you-go cost monitor for Claude Code."
+      "description": "Cost monitor for Claude Code: LiteLLM pay-as-you-go, or token counting on a subscription."
     }
   ]
 }
